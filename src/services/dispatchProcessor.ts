@@ -3,11 +3,14 @@
  */
 
 import { requestEvolutionAPI } from '../utils/evolutionAPI';
+import { sendViaOficialAPI } from '../utils/oficialAPI';
 import { replaceVariablesInContent } from '../utils/variableReplacer';
 import { ensureNormalizedPhone } from '../utils/numberNormalizer';
 import { TemplateService } from './templateService';
 import { DispatchService } from './dispatchService';
 import { ContactData } from '../types/dispatch';
+
+type OfficialContext = { integration: string; phone_number_id: string } | undefined;
 
 // Número máximo de tentativas para retry
 const MAX_RETRY_ATTEMPTS = 3;
@@ -100,19 +103,18 @@ const extractSendResult = (response: any, fallbackRemoteJid: string): SendResult
 const sendTextMessage = async (
   instanceName: string,
   remoteJid: string,
-  text: string
+  text: string,
+  official?: OfficialContext
 ): Promise<SendResult> => {
+  if (official?.integration === 'WHATSAPP-CLOUD' && official?.phone_number_id) {
+    return sendViaOficialAPI(official.phone_number_id, remoteJid, { text });
+  }
   const number = cleanPhoneForEvolutionAPI(remoteJid);
-  
   const response = await requestEvolutionAPI(
     'POST',
     `/message/sendText/${encodeURIComponent(instanceName)}`,
-    {
-      number: number,
-      text,
-    }
+    { number, text }
   );
-
   return extractSendResult(response, remoteJid);
 };
 
@@ -123,21 +125,18 @@ const sendImageMessage = async (
   instanceName: string,
   remoteJid: string,
   imageUrl: string,
-  caption?: string
+  caption?: string,
+  official?: OfficialContext
 ): Promise<SendResult> => {
+  if (official?.integration === 'WHATSAPP-CLOUD' && official?.phone_number_id) {
+    return sendViaOficialAPI(official.phone_number_id, remoteJid, { image: imageUrl, caption });
+  }
   const number = cleanPhoneForEvolutionAPI(remoteJid);
-  
   const response = await requestEvolutionAPI(
     'POST',
     `/message/sendMedia/${encodeURIComponent(instanceName)}`,
-    {
-      number: number,
-      mediatype: 'image',
-      media: imageUrl,
-      caption: caption || '',
-    }
+    { number, mediatype: 'image', media: imageUrl, caption: caption || '' }
   );
-
   return extractSendResult(response, remoteJid);
 };
 
@@ -148,43 +147,39 @@ const sendVideoMessage = async (
   instanceName: string,
   remoteJid: string,
   videoUrl: string,
-  caption?: string
+  caption?: string,
+  official?: OfficialContext
 ): Promise<SendResult> => {
+  if (official?.integration === 'WHATSAPP-CLOUD' && official?.phone_number_id) {
+    return sendViaOficialAPI(official.phone_number_id, remoteJid, { video: videoUrl, caption });
+  }
   const number = cleanPhoneForEvolutionAPI(remoteJid);
-  
   const response = await requestEvolutionAPI(
     'POST',
     `/message/sendMedia/${encodeURIComponent(instanceName)}`,
-    {
-      number: number,
-      mediatype: 'video',
-      media: videoUrl,
-      caption: caption || '',
-    }
+    { number, mediatype: 'video', media: videoUrl, caption: caption || '' }
   );
-
   return extractSendResult(response, remoteJid);
 };
 
 /**
- * Enviar áudio (usa sendWhatsAppAudio - mesmo endpoint do CRM/Postman, suporta .ogg)
+ * Enviar áudio
  */
 const sendAudioMessage = async (
   instanceName: string,
   remoteJid: string,
-  audioUrl: string
+  audioUrl: string,
+  official?: OfficialContext
 ): Promise<SendResult> => {
+  if (official?.integration === 'WHATSAPP-CLOUD' && official?.phone_number_id) {
+    return sendViaOficialAPI(official.phone_number_id, remoteJid, { audio: audioUrl });
+  }
   const number = cleanPhoneForEvolutionAPI(remoteJid);
-
   const response = await requestEvolutionAPI(
     'POST',
     `/message/sendWhatsAppAudio/${encodeURIComponent(instanceName)}`,
-    {
-      number,
-      audio: audioUrl,
-    }
+    { number, audio: audioUrl }
   );
-
   return extractSendResult(response, remoteJid);
 };
 
@@ -195,21 +190,18 @@ const sendFileMessage = async (
   instanceName: string,
   remoteJid: string,
   fileUrl: string,
-  fileName: string
+  fileName: string,
+  official?: OfficialContext
 ): Promise<SendResult> => {
+  if (official?.integration === 'WHATSAPP-CLOUD' && official?.phone_number_id) {
+    return sendViaOficialAPI(official.phone_number_id, remoteJid, { document: fileUrl, fileName });
+  }
   const number = cleanPhoneForEvolutionAPI(remoteJid);
-  
   const response = await requestEvolutionAPI(
     'POST',
     `/message/sendMedia/${encodeURIComponent(instanceName)}`,
-    {
-      number: number,
-      mediatype: 'document',
-      media: fileUrl,
-      fileName,
-    }
+    { number, mediatype: 'document', media: fileUrl, fileName }
   );
-
   return extractSendResult(response, remoteJid);
 };
 
@@ -223,25 +215,26 @@ const processSequenceStep = async (
   remoteJid: string,
   step: SequenceStep,
   contact: ContactData,
-  defaultName?: string
+  defaultName?: string,
+  official?: OfficialContext
 ): Promise<SendResult> => {
   const personalizedContent = replaceVariablesInContent(step.content, contact, defaultName || 'Cliente');
 
   switch (step.type) {
     case 'text':
-      return await sendTextMessage(instanceName, remoteJid, personalizedContent.text);
+      return await sendTextMessage(instanceName, remoteJid, personalizedContent.text, official);
     case 'image':
-      return await sendImageMessage(instanceName, remoteJid, personalizedContent.imageUrl);
+      return await sendImageMessage(instanceName, remoteJid, personalizedContent.imageUrl, undefined, official);
     case 'image_caption':
-      return await sendImageMessage(instanceName, remoteJid, personalizedContent.imageUrl, personalizedContent.caption);
+      return await sendImageMessage(instanceName, remoteJid, personalizedContent.imageUrl, personalizedContent.caption, official);
     case 'video':
-      return await sendVideoMessage(instanceName, remoteJid, personalizedContent.videoUrl);
+      return await sendVideoMessage(instanceName, remoteJid, personalizedContent.videoUrl, undefined, official);
     case 'video_caption':
-      return await sendVideoMessage(instanceName, remoteJid, personalizedContent.videoUrl, personalizedContent.caption);
+      return await sendVideoMessage(instanceName, remoteJid, personalizedContent.videoUrl, personalizedContent.caption, official);
     case 'audio':
-      return await sendAudioMessage(instanceName, remoteJid, personalizedContent.audioUrl);
+      return await sendAudioMessage(instanceName, remoteJid, personalizedContent.audioUrl, official);
     case 'file':
-      return await sendFileMessage(instanceName, remoteJid, personalizedContent.fileUrl, personalizedContent.fileName);
+      return await sendFileMessage(instanceName, remoteJid, personalizedContent.fileUrl, personalizedContent.fileName, official);
     default:
       throw new Error(`Tipo de etapa não suportado: ${step.type}`);
   }
@@ -302,7 +295,9 @@ export const processContact = async (
   templateId: string,
   contact: ContactData,
   defaultName: string | null,
-  settings: { speed: string; autoDelete?: boolean; deleteDelay?: number; deleteDelayUnit?: string }
+  settings: { speed: string; autoDelete?: boolean; deleteDelay?: number; deleteDelayUnit?: string },
+  integration?: string | null,
+  phone_number_id?: string | null
 ): Promise<{ success: boolean; error?: string; messageId?: string }> => {
   try {
     // Validar instanceName
@@ -345,34 +340,36 @@ export const processContact = async (
 
     const remoteJid = phoneToRemoteJid(formattedPhone);
     let sendResult: SendResult | undefined;
+    const official: OfficialContext =
+      integration === 'WHATSAPP-CLOUD' && phone_number_id
+        ? { integration, phone_number_id }
+        : undefined;
 
-    // Função para enviar mensagem com retry
     const sendMessageWithRetry = async (): Promise<SendResult> => {
       switch (template.type) {
         case 'text':
-          return await sendTextMessage(instanceName, remoteJid, personalizedContent.text);
+          return await sendTextMessage(instanceName, remoteJid, personalizedContent.text, official);
 
         case 'image':
-          return await sendImageMessage(instanceName, remoteJid, personalizedContent.imageUrl);
+          return await sendImageMessage(instanceName, remoteJid, personalizedContent.imageUrl, undefined, official);
 
         case 'image_caption':
-          return await sendImageMessage(instanceName, remoteJid, personalizedContent.imageUrl, personalizedContent.caption);
+          return await sendImageMessage(instanceName, remoteJid, personalizedContent.imageUrl, personalizedContent.caption, official);
 
         case 'video':
-          return await sendVideoMessage(instanceName, remoteJid, personalizedContent.videoUrl);
+          return await sendVideoMessage(instanceName, remoteJid, personalizedContent.videoUrl, undefined, official);
 
         case 'video_caption':
-          return await sendVideoMessage(instanceName, remoteJid, personalizedContent.videoUrl, personalizedContent.caption);
+          return await sendVideoMessage(instanceName, remoteJid, personalizedContent.videoUrl, personalizedContent.caption, official);
 
         case 'audio':
-          return await sendAudioMessage(instanceName, remoteJid, personalizedContent.audioUrl);
+          return await sendAudioMessage(instanceName, remoteJid, personalizedContent.audioUrl, official);
 
         case 'file':
-          return await sendFileMessage(instanceName, remoteJid, personalizedContent.fileUrl, personalizedContent.fileName);
+          return await sendFileMessage(instanceName, remoteJid, personalizedContent.fileUrl, personalizedContent.fileName, official);
 
-        case 'sequence':
+        case 'sequence': {
           let lastResult: SendResult | undefined;
-          
           for (const step of personalizedContent.steps) {
             let delayMs = step.delay * 1000;
             if (step.delayUnit === 'minutes') {
@@ -380,24 +377,24 @@ export const processContact = async (
             } else if (step.delayUnit === 'hours') {
               delayMs = step.delay * 60 * 60 * 1000;
             }
-            
             if (delayMs > 0) {
               await new Promise(resolve => setTimeout(resolve, delayMs));
             }
-
             const stepRemoteJid = lastResult?.remoteJid || remoteJid;
             lastResult = await processSequenceStep(
               instanceName,
               stepRemoteJid,
               step,
               normalizedContact,
-              defaultName || undefined
+              defaultName || undefined,
+              official
             );
           }
           if (!lastResult) {
             throw new Error('Falha ao processar sequência de mensagens');
           }
           return lastResult;
+        }
 
         default:
           throw new Error(`Tipo de template não suportado: ${template.type}`);

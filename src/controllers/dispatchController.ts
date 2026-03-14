@@ -156,19 +156,27 @@ export const createDispatch = async (
       })
       .filter((c): c is typeof processedContacts[0] & { phone: string } => c !== null);
 
-    // Validar números
     let validatedContacts;
-    try {
-      validatedContacts = await validateContacts(instance.instanceName, normalizedContacts);
-    } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : 'Erro desconhecido';
-      console.warn(`⚠️ Validação de números não disponível (${errorMessage}). Usando contatos sem validação.`);
+    if (instance.integration === 'WHATSAPP-CLOUD') {
       validatedContacts = normalizedContacts.map((c) => ({
         phone: c.phone,
         name: c.name,
         validated: true,
         validationResult: undefined,
       }));
+    } else {
+      try {
+        validatedContacts = await validateContacts(instance.instanceName, normalizedContacts);
+      } catch (error: unknown) {
+        const errorMessage = error instanceof Error ? error.message : 'Erro desconhecido';
+        console.warn(`⚠️ Validação de números não disponível (${errorMessage}). Usando contatos sem validação.`);
+        validatedContacts = normalizedContacts.map((c) => ({
+          phone: c.phone,
+          name: c.name,
+          validated: true,
+          validationResult: undefined,
+        }));
+      }
     }
 
     const validContacts = filterValidContacts(validatedContacts);
@@ -220,14 +228,16 @@ export const createDispatch = async (
     const dispatch = await DispatchService.create({
       userId,
       instanceId,
-      instanceName: instance.instanceName, // Salvar instanceName ao criar
+      instanceName: instance.instanceName,
+      integration: instance.integration ?? null,
+      phone_number_id: instance.phone_number_id ?? null,
       templateId,
       name,
       settings,
       schedule: normalizedSchedule || null,
       contactsData: contactsDataForDispatch,
       defaultName: defaultName || null,
-      userTimezone, // Salvar timezone do usuário
+      userTimezone,
     });
 
     // Calcular scheduledAt a partir de startDate e startTime

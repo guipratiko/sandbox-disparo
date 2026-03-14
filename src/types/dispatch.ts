@@ -93,7 +93,9 @@ export interface Dispatch {
   id: string;
   userId: string;
   instanceId: string;
-  instanceName: string; // Nome da instância (instanceName) usado na Evolution API
+  instanceName: string;
+  integration?: string | null;
+  phone_number_id?: string | null;
   templateId: string | null;
   name: string;
   status: DispatchStatus;
@@ -141,7 +143,9 @@ export interface DispatchStats {
 export interface CreateDispatchData {
   userId: string;
   instanceId: string;
-  instanceName: string; // Nome da instância (instanceName) usado na Evolution API
+  instanceName: string;
+  integration?: string | null;
+  phone_number_id?: string | null;
   templateId?: string | null;
   name: string;
   settings: DispatchSettings;

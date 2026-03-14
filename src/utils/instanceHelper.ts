@@ -13,6 +13,8 @@ export interface InstanceInfo {
   instanceName: string;
   status: string;
   name: string;
+  integration?: string;
+  phone_number_id?: string | null;
 }
 
 /**
@@ -33,11 +35,14 @@ export const getInstanceInfo = async (
     });
 
     if (response.data && response.data.instance) {
+      const inst = response.data.instance;
       return {
-        _id: response.data.instance._id || instanceId,
-        instanceName: response.data.instance.instanceName || instanceId,
-        status: response.data.instance.status || 'unknown',
-        name: response.data.instance.name || 'Instância',
+        _id: inst._id || inst.id || instanceId,
+        instanceName: inst.instanceName || instanceId,
+        status: inst.status || 'unknown',
+        name: inst.name || 'Instância',
+        integration: inst.integration,
+        phone_number_id: inst.phone_number_id ?? null,
       };
     }
 

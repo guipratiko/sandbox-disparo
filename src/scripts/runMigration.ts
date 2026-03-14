@@ -18,6 +18,7 @@ const runMigration = async () => {
         '006_create_dispatches_tables.sql',
         '007_add_instance_name_to_dispatches.sql',
         '008_add_user_timezone_to_dispatches.sql',
+        '009_add_integration_phone_to_dispatches.sql',
       ];
 
       for (const migrationFile of migrations) {

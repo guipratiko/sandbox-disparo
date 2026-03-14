@@ -27,17 +27,19 @@ export class DispatchService {
 
     const query = `
       INSERT INTO dispatches (
-        user_id, instance_id, instance_name, template_id, name, status,
+        user_id, instance_id, instance_name, integration, phone_number_id, template_id, name, status,
         settings, schedule, contacts_data, stats, default_name, user_timezone
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
       RETURNING *
     `;
 
     const values = [
       data.userId,
       data.instanceId,
-      data.instanceName, // Salvar instanceName para usar no scheduler
+      data.instanceName,
+      data.integration ?? null,
+      data.phone_number_id ?? null,
       data.templateId || null,
       data.name,
       'pending',
@@ -46,7 +48,7 @@ export class DispatchService {
       stringifyJsonb(data.contactsData),
       stringifyJsonb(stats),
       data.defaultName || null,
-      data.userTimezone || null, // Salvar timezone do usuário (pode ser null, será usado DEFAULT_TIMEZONE quando necessário)
+      data.userTimezone || null,
     ];
 
     const result = await pgPool.query(query, values);
@@ -284,7 +286,9 @@ export class DispatchService {
       id: row.id,
       userId: row.user_id,
       instanceId: row.instance_id,
-      instanceName: row.instance_name || row.instance_id, // Usar instance_name se disponível
+      instanceName: row.instance_name || row.instance_id,
+      integration: row.integration ?? null,
+      phone_number_id: row.phone_number_id ?? null,
       templateId: row.template_id || null,
       name: row.name,
       status: row.status || 'pending',
@@ -293,7 +297,7 @@ export class DispatchService {
       contactsData,
       stats,
       defaultName: row.default_name || null,
-      userTimezone: row.user_timezone || null, // null será tratado como DEFAULT_TIMEZONE quando necessário
+      userTimezone: row.user_timezone || null,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       startedAt: row.started_at || null,

@@ -152,7 +152,9 @@ const processDispatch = async (dispatchId: string, userId: string): Promise<void
         dispatch.templateId,
         contact,
         dispatch.defaultName || null,
-        dispatch.settings
+        dispatch.settings,
+        dispatch.integration ?? undefined,
+        dispatch.phone_number_id ?? undefined
       );
 
       // Delay entre mensagens (exceto a última)
