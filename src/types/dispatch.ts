@@ -138,7 +138,16 @@ export interface DispatchStats {
   failed: number;
   invalid: number;
   total: number;
+  /** Número de etapas do template (sequência); omitido ou 1 = disparo “simples”. */
+  sequenceStepCount?: number;
+  /** Caudas assíncronas (etapas 2+) ainda em execução; só concluir disparo quando 0. */
+  pendingSequenceTails?: number;
 }
+
+/** Atualização atômica de stats (delta para pendingSequenceTails). */
+export type DispatchStatsUpdate = Partial<DispatchStats> & {
+  pendingSequenceTailsDelta?: number;
+};
 
 export interface CreateDispatchData {
   userId: string;
@@ -153,6 +162,8 @@ export interface CreateDispatchData {
   contactsData: ContactData[];
   defaultName?: string | null;
   userTimezone?: string; // Fuso horário do usuário
+  /** Etapas do template (sequência); padrão 1. */
+  sequenceStepCount?: number;
 }
 
 export interface UpdateDispatchData {

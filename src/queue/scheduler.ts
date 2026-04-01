@@ -16,6 +16,7 @@ import {
   getWeekdayInTimezone,
 } from '../utils/timezoneHelper';
 import { DEFAULT_TIMEZONE } from '../config/constants';
+import { isDispatchQueueComplete } from '../utils/dispatchQueueComplete';
 
 // Set para rastrear disparos em processamento (evitar processamento duplicado)
 // Usa Map com timestamp para limpeza automática de entradas antigas
@@ -87,7 +88,7 @@ const processDispatch = async (dispatchId: string, userId: string): Promise<void
       }
     }
 
-    if (dispatch.stats.sent + dispatch.stats.failed >= dispatch.stats.total) {
+    if (isDispatchQueueComplete(dispatch)) {
       await DispatchService.update(dispatchId, dispatch.userId, {
         status: 'completed',
         completedAt: new Date(),
@@ -114,12 +115,16 @@ const processDispatch = async (dispatchId: string, userId: string): Promise<void
     }
 
     const processedCount = currentDispatch.stats.sent + currentDispatch.stats.failed;
-    
-    if (processedCount >= currentDispatch.stats.total) {
+
+    if (isDispatchQueueComplete(currentDispatch)) {
       await DispatchService.update(dispatchId, dispatch.userId, {
         status: 'completed',
         completedAt: new Date(),
       });
+      return;
+    }
+
+    if (processedCount >= currentDispatch.stats.total) {
       return;
     }
 
@@ -168,14 +173,11 @@ const processDispatch = async (dispatchId: string, userId: string): Promise<void
 
     // Verificar se todos foram processados
     const finalDispatch = await DispatchService.getById(dispatchId, dispatch.userId);
-    if (finalDispatch) {
-      const finalStats = finalDispatch.stats;
-      if (finalStats.sent + finalStats.failed >= finalStats.total) {
-        await DispatchService.update(dispatchId, dispatch.userId, {
-          status: 'completed',
-          completedAt: new Date(),
-        });
-      }
+    if (finalDispatch && isDispatchQueueComplete(finalDispatch)) {
+      await DispatchService.update(dispatchId, dispatch.userId, {
+        status: 'completed',
+        completedAt: new Date(),
+      });
     }
   } catch (error) {
     console.error(`❌ Erro ao processar disparo ${dispatchId}:`, error);
@@ -272,12 +274,16 @@ export const processScheduledDispatches = async (): Promise<void> => {
         }
       }
 
-      const processedCount = dispatch.stats.sent + dispatch.stats.failed;
-      if (processedCount >= dispatch.stats.total) {
+      if (isDispatchQueueComplete(dispatch)) {
         await DispatchService.update(dispatch.id, dispatch.userId, {
           status: 'completed',
           completedAt: new Date(),
         });
+        continue;
+      }
+
+      const processedCount = dispatch.stats.sent + dispatch.stats.failed;
+      if (processedCount >= dispatch.stats.total) {
         continue;
       }
 
@@ -334,12 +340,15 @@ export const resumeInProgressDispatches = async (): Promise<void> => {
         const processedCount = dispatch.stats.sent + dispatch.stats.failed;
 
         // Verificar se o disparo ainda está válido para processar
-        if (processedCount >= dispatch.stats.total) {
-          // Todos já foram processados, marcar como concluído
+        if (isDispatchQueueComplete(dispatch)) {
           await DispatchService.update(dispatch.id, dispatch.userId, {
             status: 'completed',
             completedAt: new Date(),
           });
+          continue;
+        }
+
+        if (processedCount >= dispatch.stats.total) {
           continue;
         }
 

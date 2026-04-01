@@ -10,10 +10,12 @@ import {
   DispatchSettings,
   DispatchSchedule,
   DispatchStats,
+  DispatchStatsUpdate,
   ContactData,
   CreateDispatchData,
   UpdateDispatchData,
 } from '../types/dispatch';
+import { isDispatchQueueComplete } from '../utils/dispatchQueueComplete';
 import { emitDispatchUpdate } from '../socket/socketClient';
 
 export class DispatchService {
@@ -23,6 +25,8 @@ export class DispatchService {
       failed: 0,
       invalid: 0,
       total: data.contactsData.length,
+      sequenceStepCount: data.sequenceStepCount ?? 1,
+      pendingSequenceTails: 0,
     };
 
     const query = `
@@ -178,10 +182,28 @@ export class DispatchService {
     return updatedDispatch;
   }
 
+  /**
+   * Se a fila principal e as caudas de sequência terminaram, marca `completed`.
+   * Chamado após decrementar `pendingSequenceTails` na cauda.
+   */
+  static async tryFinalizeIfComplete(dispatchId: string, userId: string): Promise<void> {
+    const d = await this.getById(dispatchId, userId);
+    if (!d || d.status !== 'running') {
+      return;
+    }
+    if (!isDispatchQueueComplete(d)) {
+      return;
+    }
+    await this.update(dispatchId, userId, {
+      status: 'completed',
+      completedAt: new Date(),
+    });
+  }
+
   static async updateStats(
     dispatchId: string,
     userId: string,
-    stats: Partial<DispatchStats>
+    stats: DispatchStatsUpdate
   ): Promise<Dispatch | null> {
     let statsExpression = `COALESCE(stats, '{"sent": 0, "failed": 0, "invalid": 0, "total": 0}'::jsonb)`;
     const params: any[] = [];
@@ -208,6 +230,12 @@ export class DispatchService {
     if (stats.total !== undefined) {
       statsExpression = `jsonb_set(${statsExpression}, '{total}', to_jsonb($${paramIndex}::int))`;
       params.push(stats.total);
+      paramIndex++;
+    }
+
+    if (stats.pendingSequenceTailsDelta !== undefined) {
+      statsExpression = `jsonb_set(${statsExpression}, '{pendingSequenceTails}', to_jsonb(GREATEST(0, COALESCE((${statsExpression}->>'pendingSequenceTails')::int, 0) + $${paramIndex}::int)))`;
+      params.push(stats.pendingSequenceTailsDelta);
       paramIndex++;
     }
 
@@ -286,10 +314,15 @@ export class DispatchService {
           }
         : null;
     const contactsData = parseJsonbField<ContactData[]>(row.contacts_data, []);
-    const stats = parseJsonbField<DispatchStats>(
+    const rawStats = parseJsonbField<DispatchStats>(
       row.stats,
       { sent: 0, failed: 0, invalid: 0, total: 0 }
     );
+    const stats: DispatchStats = {
+      ...rawStats,
+      sequenceStepCount: rawStats.sequenceStepCount ?? 1,
+      pendingSequenceTails: rawStats.pendingSequenceTails ?? 0,
+    };
 
     return {
       id: row.id,

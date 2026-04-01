@@ -490,6 +490,7 @@ export const processContact = async (
       }
 
       if (steps.length > 1) {
+        await DispatchService.updateStats(dispatchId, userId, { pendingSequenceTailsDelta: 1 });
         void runSequenceTailAsync({
           dispatchId,
           userId,
@@ -502,7 +503,16 @@ export const processContact = async (
           settings: dispatchSettings,
           initialRemoteJid: remoteJid,
           initialLastResult: sendResult,
-        }).catch((err) => console.error('❌ [sequence tail] não tratado:', err));
+        })
+          .catch((err) => console.error('❌ [sequence tail] não tratado:', err))
+          .finally(async () => {
+            try {
+              await DispatchService.updateStats(dispatchId, userId, { pendingSequenceTailsDelta: -1 });
+              await DispatchService.tryFinalizeIfComplete(dispatchId, userId);
+            } catch (e) {
+              console.error('❌ [sequence tail] erro ao finalizar stats/disparo:', e);
+            }
+          });
       }
 
       return { success: true, messageId };

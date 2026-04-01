@@ -16,6 +16,7 @@ import {
   DispatchSettings,
   DispatchSchedule,
   DispatchStatus,
+  SequenceTemplateContent,
   UpdateDispatchData,
 } from '../types/dispatch';
 import { TemplateService } from '../services/templateService';
@@ -264,6 +265,14 @@ export const createDispatch = async (
       }
     }
 
+    let sequenceStepCount = 1;
+    if (template.type === 'sequence') {
+      const steps = (template.content as SequenceTemplateContent).steps;
+      if (Array.isArray(steps) && steps.length > 0) {
+        sequenceStepCount = steps.length;
+      }
+    }
+
     const dispatch = await DispatchService.create({
       userId,
       instanceId,
@@ -277,6 +286,7 @@ export const createDispatch = async (
       contactsData: contactsDataForDispatch,
       defaultName: defaultName || null,
       userTimezone,
+      sequenceStepCount,
     });
 
     res.status(201).json({
