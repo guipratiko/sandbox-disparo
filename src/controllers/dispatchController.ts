@@ -10,7 +10,14 @@ import {
   handleControllerError,
 } from '../utils/errorHelpers';
 import { DispatchService } from '../services/dispatchService';
-import { DispatchSettings, DispatchSchedule, DispatchStatus, UpdateDispatchData } from '../types/dispatch';
+import {
+  ContactData,
+  Dispatch,
+  DispatchSettings,
+  DispatchSchedule,
+  DispatchStatus,
+  UpdateDispatchData,
+} from '../types/dispatch';
 import { TemplateService } from '../services/templateService';
 import { validateContacts, filterValidContacts } from '../services/contactValidationService';
 import { parseCSVFile, parseInputText } from '../utils/csvParser';
@@ -19,7 +26,39 @@ import { DEFAULT_TIMEZONE } from '../config/constants';
 import { getInstanceInfo } from '../utils/instanceHelper';
 import { pgPool } from '../config/databases';
 import multer from 'multer';
-import { ContactData } from '../types/dispatch';
+
+/** Payload alinhado ao Frontend (settings, schedule, stats + campos legados sentCount etc.) */
+function dispatchToApiResponse(d: Dispatch) {
+  let scheduledAt: string | null = null;
+  if (d.schedule?.startDate && d.schedule?.startTime) {
+    try {
+      const dateTime = `${d.schedule.startDate}T${d.schedule.startTime}:00`;
+      scheduledAt = new Date(dateTime).toISOString();
+    } catch {
+      scheduledAt = null;
+    }
+  }
+  const stats = d.stats ?? { sent: 0, failed: 0, invalid: 0, total: 0 };
+  return {
+    id: d.id,
+    name: d.name,
+    status: d.status,
+    instanceId: d.instanceId,
+    templateId: d.templateId,
+    settings: d.settings,
+    schedule: d.schedule,
+    stats,
+    defaultName: d.defaultName ?? null,
+    createdAt: d.createdAt.toISOString(),
+    updatedAt: d.updatedAt.toISOString(),
+    scheduledAt,
+    startedAt: d.startedAt?.toISOString() ?? null,
+    completedAt: d.completedAt?.toISOString() ?? null,
+    sentCount: stats.sent,
+    totalCount: stats.total,
+    failedCount: stats.failed,
+  };
+}
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -240,34 +279,9 @@ export const createDispatch = async (
       userTimezone,
     });
 
-    // Calcular scheduledAt a partir de startDate e startTime
-    let scheduledAt: string | null = null;
-    if (dispatch.schedule?.startDate && dispatch.schedule?.startTime) {
-      try {
-        const dateTime = `${dispatch.schedule.startDate}T${dispatch.schedule.startTime}:00`;
-        scheduledAt = new Date(dateTime).toISOString();
-      } catch {
-        scheduledAt = null;
-      }
-    }
-
     res.status(201).json({
       status: 'success',
-      dispatch: {
-        id: dispatch.id,
-        name: dispatch.name,
-        status: dispatch.status,
-        instanceId: dispatch.instanceId,
-        templateId: dispatch.templateId,
-        sentCount: dispatch.stats?.sent || 0,
-        totalCount: dispatch.stats?.total || 0,
-        failedCount: dispatch.stats?.failed || 0,
-        createdAt: dispatch.createdAt.toISOString(),
-        updatedAt: dispatch.updatedAt.toISOString(),
-        scheduledAt,
-        startedAt: dispatch.startedAt?.toISOString() || null,
-        completedAt: dispatch.completedAt?.toISOString() || null,
-      },
+      dispatch: dispatchToApiResponse(dispatch),
     });
   } catch (error: unknown) {
     return next(handleControllerError(error, 'Erro ao criar disparo'));
@@ -385,34 +399,7 @@ export const getDispatches = async (
 
     res.status(200).json({
       status: 'success',
-      dispatches: dispatches.map((d) => {
-        // Calcular scheduledAt a partir de startDate e startTime
-        let scheduledAt: string | null = null;
-        if (d.schedule?.startDate && d.schedule?.startTime) {
-          try {
-            const dateTime = `${d.schedule.startDate}T${d.schedule.startTime}:00`;
-            scheduledAt = new Date(dateTime).toISOString();
-          } catch {
-            scheduledAt = null;
-          }
-        }
-
-        return {
-        id: d.id,
-        name: d.name,
-        status: d.status,
-        instanceId: d.instanceId,
-        templateId: d.templateId,
-          sentCount: d.stats?.sent || 0,
-          totalCount: d.stats?.total || 0,
-          failedCount: d.stats?.failed || 0,
-        createdAt: d.createdAt.toISOString(),
-          updatedAt: d.updatedAt.toISOString(),
-          scheduledAt,
-        startedAt: d.startedAt?.toISOString() || null,
-        completedAt: d.completedAt?.toISOString() || null,
-        };
-      }),
+      dispatches: dispatches.map((d) => dispatchToApiResponse(d)),
     });
   } catch (error: unknown) {
     return next(handleControllerError(error, 'Erro ao listar disparos'));
@@ -439,34 +426,9 @@ export const getDispatch = async (
       return next(createNotFoundError('Disparo'));
     }
 
-    // Calcular scheduledAt a partir de startDate e startTime
-    let scheduledAt: string | null = null;
-    if (dispatch.schedule?.startDate && dispatch.schedule?.startTime) {
-      try {
-        const dateTime = `${dispatch.schedule.startDate}T${dispatch.schedule.startTime}:00`;
-        scheduledAt = new Date(dateTime).toISOString();
-      } catch {
-        scheduledAt = null;
-      }
-    }
-
     res.status(200).json({
       status: 'success',
-      dispatch: {
-        id: dispatch.id,
-        name: dispatch.name,
-        status: dispatch.status,
-        instanceId: dispatch.instanceId,
-        templateId: dispatch.templateId,
-        sentCount: dispatch.stats?.sent || 0,
-        totalCount: dispatch.stats?.total || 0,
-        failedCount: dispatch.stats?.failed || 0,
-        createdAt: dispatch.createdAt.toISOString(),
-        updatedAt: dispatch.updatedAt.toISOString(),
-        scheduledAt,
-        startedAt: dispatch.startedAt?.toISOString() || null,
-        completedAt: dispatch.completedAt?.toISOString() || null,
-      },
+      dispatch: dispatchToApiResponse(dispatch),
     });
   } catch (error: unknown) {
     return next(handleControllerError(error, 'Erro ao buscar disparo'));
@@ -515,20 +477,7 @@ export const updateDispatch = async (
 
     res.status(200).json({
       status: 'success',
-      dispatch: {
-        id: updatedDispatch.id,
-        name: updatedDispatch.name,
-        status: updatedDispatch.status,
-        instanceId: updatedDispatch.instanceId,
-        templateId: updatedDispatch.templateId,
-        settings: updatedDispatch.settings,
-        schedule: updatedDispatch.schedule,
-        stats: updatedDispatch.stats,
-        defaultName: updatedDispatch.defaultName,
-        createdAt: updatedDispatch.createdAt.toISOString(),
-        startedAt: updatedDispatch.startedAt?.toISOString() || null,
-        completedAt: updatedDispatch.completedAt?.toISOString() || null,
-      },
+      dispatch: dispatchToApiResponse(updatedDispatch),
     });
   } catch (error: unknown) {
     return next(handleControllerError(error, 'Erro ao atualizar disparo'));
