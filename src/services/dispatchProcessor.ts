@@ -8,7 +8,7 @@ import { replaceVariablesInContent } from '../utils/variableReplacer';
 import { ensureNormalizedPhone } from '../utils/numberNormalizer';
 import { TemplateService } from './templateService';
 import { DispatchService } from './dispatchService';
-import { ContactData } from '../types/dispatch';
+import { ContactData, SequenceStep, DispatchSettings } from '../types/dispatch';
 
 type OfficialContext = { integration: string; phone_number_id: string } | undefined;
 
@@ -205,11 +205,99 @@ const sendFileMessage = async (
   return extractSendResult(response, remoteJid);
 };
 
+/** Converte o delay configurado na etapa (antes do envio da própria etapa) em ms */
+const stepDelayBeforeSendMs = (step: SequenceStep): number => {
+  let delayMs = step.delay * 1000;
+  if (step.delayUnit === 'minutes') {
+    delayMs = step.delay * 60 * 1000;
+  } else if (step.delayUnit === 'hours') {
+    delayMs = step.delay * 60 * 60 * 1000;
+  }
+  return delayMs;
+};
+
+/**
+ * Etapas 2+ da sequência rodam em background: não bloqueiam o próximo contato do disparo.
+ * - Delay da 1ª etapa do template é ignorado no envio inicial (espaçamento vem do disparo: fast/normal/slow/randomized).
+ * - A partir da 2ª etapa: aplica-se o delay configurado naquela etapa (ex.: 2h antes da imagem) e, se speed for randomized, um intervalo extra anti-detecção.
+ */
+const runSequenceTailAsync = async (params: {
+  dispatchId: string;
+  userId: string;
+  instanceName: string;
+  steps: SequenceStep[];
+  startIndex: number;
+  normalizedContact: ContactData;
+  defaultName?: string;
+  official: OfficialContext;
+  settings: DispatchSettings;
+  initialRemoteJid: string;
+  initialLastResult: SendResult;
+}): Promise<void> => {
+  let lastResult: SendResult = params.initialLastResult;
+
+  for (let i = params.startIndex; i < params.steps.length; i++) {
+    const dispatch = await DispatchService.getById(params.dispatchId, params.userId);
+    if (!dispatch || dispatch.status !== 'running') {
+      console.log(
+        `[sequence tail] interrompido (dispatch ${params.dispatchId} status=${dispatch?.status ?? 'não encontrado'})`
+      );
+      return;
+    }
+
+    const step = params.steps[i];
+    const templateDelayMs = stepDelayBeforeSendMs(step);
+    if (templateDelayMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, templateDelayMs));
+    }
+
+    if (params.settings.speed === 'randomized') {
+      const jitterMs = calculateDelay('randomized');
+      await new Promise((resolve) => setTimeout(resolve, jitterMs));
+    }
+
+    const stepRemoteJid = lastResult?.remoteJid || params.initialRemoteJid;
+
+    try {
+      lastResult = await retryWithBackoff(() =>
+        processSequenceStep(
+          params.instanceName,
+          stepRemoteJid,
+          step,
+          params.normalizedContact,
+          params.defaultName,
+          params.official
+        )
+      );
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      console.error(`❌ [sequence tail] etapa ${i + 1} falhou (dispatch ${params.dispatchId}):`, msg);
+      return;
+    }
+
+    if (params.settings.autoDelete && lastResult.messageId && params.settings.deleteDelay) {
+      const unit = params.settings.deleteDelayUnit;
+      const deleteDelayMs = calculateDeleteDelay(
+        params.settings.deleteDelay,
+        unit === 'seconds' || unit === 'minutes' || unit === 'hours' ? unit : undefined
+      );
+      const mid = lastResult.messageId;
+      const rjid = lastResult.remoteJid;
+      const iname = params.instanceName;
+      setTimeout(async () => {
+        try {
+          await deleteMessage(iname, rjid, mid);
+        } catch (err) {
+          console.error(`❌ Erro ao deletar mensagem ${mid} (sequence tail):`, err);
+        }
+      }, deleteDelayMs);
+    }
+  }
+};
+
 /**
  * Processar uma etapa de sequência
  */
-import { SequenceStep } from '../types/dispatch';
-
 const processSequenceStep = async (
   instanceName: string,
   remoteJid: string,
@@ -345,6 +433,81 @@ export const processContact = async (
         ? { integration, phone_number_id }
         : undefined;
 
+    const du = settings.deleteDelayUnit;
+    const dispatchSettings: DispatchSettings = {
+      speed: settings.speed as DispatchSettings['speed'],
+      autoDelete: settings.autoDelete,
+      deleteDelay: settings.deleteDelay,
+      deleteDelayUnit:
+        du === 'seconds' || du === 'minutes' || du === 'hours' ? du : undefined,
+    };
+
+    /** Sequência: só a 1ª etapa bloqueia o disparo; demais etapas em background */
+    if (template.type === 'sequence') {
+      const steps = personalizedContent.steps as SequenceStep[] | undefined;
+      if (!steps?.length) {
+        await DispatchService.updateStats(dispatchId, userId, { failed: 1 });
+        return { success: false, error: 'Sequência sem etapas' };
+      }
+
+      const firstStep = steps[0];
+      try {
+        sendResult = await retryWithBackoff(() =>
+          processSequenceStep(
+            instanceName,
+            remoteJid,
+            firstStep,
+            normalizedContact,
+            defaultName || undefined,
+            official
+          )
+        );
+      } catch (error) {
+        const errorMessage =
+          error instanceof Error ? error.message : 'Erro desconhecido ao enviar mensagem';
+        console.error(
+          `❌ processContact: Erro na 1ª etapa da sequência após ${MAX_RETRY_ATTEMPTS} tentativas:`,
+          errorMessage
+        );
+        await DispatchService.updateStats(dispatchId, userId, { failed: 1 });
+        return { success: false, error: errorMessage };
+      }
+
+      const messageId = sendResult.messageId;
+      const realRemoteJid = sendResult.remoteJid || remoteJid;
+
+      await DispatchService.updateStats(dispatchId, userId, { sent: 1 });
+
+      if (settings.autoDelete && messageId && settings.deleteDelay) {
+        const deleteDelayMs = calculateDeleteDelay(settings.deleteDelay, settings.deleteDelayUnit);
+        setTimeout(async () => {
+          try {
+            await deleteMessage(instanceName, realRemoteJid, messageId);
+          } catch (error) {
+            console.error(`❌ Erro ao deletar mensagem ${messageId}:`, error);
+          }
+        }, deleteDelayMs);
+      }
+
+      if (steps.length > 1) {
+        void runSequenceTailAsync({
+          dispatchId,
+          userId,
+          instanceName,
+          steps,
+          startIndex: 1,
+          normalizedContact,
+          defaultName: defaultName || undefined,
+          official,
+          settings: dispatchSettings,
+          initialRemoteJid: remoteJid,
+          initialLastResult: sendResult,
+        }).catch((err) => console.error('❌ [sequence tail] não tratado:', err));
+      }
+
+      return { success: true, messageId };
+    }
+
     const sendMessageWithRetry = async (): Promise<SendResult> => {
       switch (template.type) {
         case 'text':
@@ -367,34 +530,6 @@ export const processContact = async (
 
         case 'file':
           return await sendFileMessage(instanceName, remoteJid, personalizedContent.fileUrl, personalizedContent.fileName, official);
-
-        case 'sequence': {
-          let lastResult: SendResult | undefined;
-          for (const step of personalizedContent.steps) {
-            let delayMs = step.delay * 1000;
-            if (step.delayUnit === 'minutes') {
-              delayMs = step.delay * 60 * 1000;
-            } else if (step.delayUnit === 'hours') {
-              delayMs = step.delay * 60 * 60 * 1000;
-            }
-            if (delayMs > 0) {
-              await new Promise(resolve => setTimeout(resolve, delayMs));
-            }
-            const stepRemoteJid = lastResult?.remoteJid || remoteJid;
-            lastResult = await processSequenceStep(
-              instanceName,
-              stepRemoteJid,
-              step,
-              normalizedContact,
-              defaultName || undefined,
-              official
-            );
-          }
-          if (!lastResult) {
-            throw new Error('Falha ao processar sequência de mensagens');
-          }
-          return lastResult;
-        }
 
         default:
           throw new Error(`Tipo de template não suportado: ${template.type}`);
