@@ -275,7 +275,16 @@ export class DispatchService {
       speed: 'normal',
       autoDelete: false,
     });
-    const schedule = parseJsonbField<DispatchSchedule | null>(row.schedule, null);
+    const scheduleRaw = parseJsonbField<DispatchSchedule | null>(row.schedule, null);
+    const schedule =
+      scheduleRaw != null
+        ? {
+            ...scheduleRaw,
+            suspendedDays: Array.isArray(scheduleRaw.suspendedDays)
+              ? scheduleRaw.suspendedDays
+              : [],
+          }
+        : null;
     const contactsData = parseJsonbField<ContactData[]>(row.contacts_data, []);
     const stats = parseJsonbField<DispatchStats>(
       row.stats,

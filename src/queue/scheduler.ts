@@ -13,6 +13,7 @@ import {
   hasStartDatePassed,
   isWithinAllowedHours,
   getScheduleTimezone,
+  getWeekdayInTimezone,
 } from '../utils/timezoneHelper';
 import { DEFAULT_TIMEZONE } from '../config/constants';
 
@@ -33,12 +34,12 @@ const cleanupOldProcessingEntries = (): void => {
   }
 };
 
-/**
- * Verificar se é dia permitido
- */
-const isAllowedDay = (schedule: DispatchSchedule): boolean => {
-  const today = new Date().getDay();
-  return !schedule.suspendedDays.includes(today);
+/** Dia da semana no fuso da agenda (não usar getDay() do servidor). */
+const isAllowedDay = (schedule: DispatchSchedule, userTimezone: string): boolean => {
+  const tz = getScheduleTimezone(schedule, userTimezone);
+  const today = getWeekdayInTimezone(new Date(), tz);
+  const suspended = schedule.suspendedDays ?? [];
+  return !suspended.includes(today);
 };
 
 // Funções de verificação movidas para timezoneHelper.ts
@@ -81,7 +82,7 @@ const processDispatch = async (dispatchId: string, userId: string): Promise<void
       }
       
       // Verificar se é dia permitido
-      if (!isAllowedDay(dispatch.schedule)) {
+      if (!isAllowedDay(dispatch.schedule, userTimezone)) {
         return;
       }
     }
@@ -196,7 +197,7 @@ export const processScheduledDispatches = async (): Promise<void> => {
       
       // Verificar se a data/hora de início já passou (considerando timezone)
       if (!hasStartDatePassed(dispatch.schedule, userTimezone)) continue;
-      if (!isAllowedDay(dispatch.schedule)) continue;
+      if (!isAllowedDay(dispatch.schedule, userTimezone)) continue;
 
       // Verificar se está dentro do horário permitido (considerando timezone)
       if (!isWithinAllowedHours(dispatch.schedule, userTimezone)) {
@@ -266,7 +267,7 @@ export const processScheduledDispatches = async (): Promise<void> => {
         }
         
         // Verificar se é dia permitido
-        if (!isAllowedDay(dispatch.schedule)) {
+        if (!isAllowedDay(dispatch.schedule, userTimezone)) {
           continue;
         }
       }
@@ -366,7 +367,7 @@ export const resumeInProgressDispatches = async (): Promise<void> => {
           }
           
           // Verificar se é dia permitido
-          if (!isAllowedDay(dispatch.schedule)) {
+          if (!isAllowedDay(dispatch.schedule, userTimezone)) {
             await DispatchService.update(dispatch.id, dispatch.userId, { status: 'paused' });
             continue;
           }
