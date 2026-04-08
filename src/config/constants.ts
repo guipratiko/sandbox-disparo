@@ -37,7 +37,7 @@ export const EVOLUTION_CONFIG = {
   URL: process.env.EVOLUTION_API_URL || 'https://evo.clerky.com.br',
 };
 
-// OficialAPI-Clerky (WhatsApp Cloud API)
+// API oficial WhatsApp Cloud (OnlyFlow) — env OFFICIAL_API_CLERKY_* mantido por compatibilidade
 export const OFFICIAL_API_CLERKY_URL = process.env.OFFICIAL_API_CLERKY_URL || 'http://localhost:4338';
 export const OFFICIAL_API_CLERKY_API_KEY = process.env.OFFICIAL_API_CLERKY_API_KEY || '';
 

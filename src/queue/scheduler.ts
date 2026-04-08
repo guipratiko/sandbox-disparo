@@ -188,6 +188,14 @@ const processDispatch = async (dispatchId: string, userId: string): Promise<void
  * Processar disparos agendados e running
  */
 export const processScheduledDispatches = async (): Promise<void> => {
+  try {
+    await runProcessScheduledDispatches();
+  } catch (error) {
+    console.error('❌ Scheduler: erro ao processar fila de disparos:', error);
+  }
+};
+
+const runProcessScheduledDispatches = async (): Promise<void> => {
   const scheduledDispatches = await DispatchService.getScheduledDispatches();
 
   for (const dispatch of scheduledDispatches) {
@@ -405,7 +413,7 @@ export const startScheduler = async (): Promise<void> => {
     cleanupOldProcessingEntries();
   }, 5 * 60 * 1000);
 
-  setInterval(async () => {
-    await processScheduledDispatches();
+  setInterval(() => {
+    void processScheduledDispatches();
   }, 1000); // Verificar a cada 1 segundo
 };

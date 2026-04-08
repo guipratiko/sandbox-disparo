@@ -13,7 +13,8 @@ export const pgPool = new Pool({
   connectionString: POSTGRES_CONFIG.URI,
   max: 20,
   idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 2000,
+  // 2s é curto para Postgres remoto (Docker/cloud); evita "connection timeout" intermitente
+  connectionTimeoutMillis: parseInt(process.env.PG_CONNECTION_TIMEOUT_MS || '30000', 10),
 });
 
 // Event listeners para PostgreSQL (sem log para evitar spam)

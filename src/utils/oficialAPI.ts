@@ -1,5 +1,5 @@
 /**
- * Cliente para OficialAPI-Clerky (WhatsApp Cloud API)
+ * Cliente para o microserviço da API oficial WhatsApp Cloud (OnlyFlow)
  */
 
 import axios from 'axios';
