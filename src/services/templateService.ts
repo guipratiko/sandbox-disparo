@@ -2,7 +2,7 @@
  * Service para gerenciamento de Templates
  */
 
-import { pgPool } from '../config/databases';
+import { pgQuery } from '../config/databases';
 import { parseJsonbField, stringifyJsonb } from '../utils/dbHelpers';
 import { Template, CreateTemplateData, UpdateTemplateData, TemplateType, TemplateContent, SequenceTemplateContent } from '../types/dispatch';
 
@@ -22,7 +22,7 @@ export class TemplateService {
     ];
 
     try {
-      const result = await pgPool.query(query, values);
+      const result = await pgQuery(query, values);
 
       if (result.rows.length === 0) {
         throw new Error('Falha ao criar template');
@@ -44,7 +44,7 @@ export class TemplateService {
       WHERE id = $1 AND user_id = $2
     `;
 
-    const result = await pgPool.query(query, [templateId, userId]);
+    const result = await pgQuery(query, [templateId, userId]);
 
     if (result.rows.length === 0) {
       return null;
@@ -67,7 +67,7 @@ export class TemplateService {
 
     query += ` ORDER BY created_at DESC`;
 
-    const result = await pgPool.query(query, params);
+    const result = await pgQuery(query, params);
 
     return result.rows.map((row: Record<string, any>) => this.mapRowToTemplate(row));
   }
@@ -106,7 +106,7 @@ export class TemplateService {
     `;
 
     try {
-      const result = await pgPool.query(query, params);
+      const result = await pgQuery(query, params);
 
       if (result.rows.length === 0) {
         return null;
@@ -128,7 +128,7 @@ export class TemplateService {
       WHERE id = $1 AND user_id = $2
     `;
 
-    const result = await pgPool.query(query, [templateId, userId]);
+    const result = await pgQuery(query, [templateId, userId]);
 
     return result.rowCount !== null && result.rowCount > 0;
   }

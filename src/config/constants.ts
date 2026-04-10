@@ -22,7 +22,10 @@ export const JWT_CONFIG = {
 
 // PostgreSQL Configuration (mesmo banco do backend principal)
 export const POSTGRES_CONFIG = {
-  URI: process.env.POSTGRES_URI || 'postgres://user:password@localhost:5432/clerky_db',
+  URI:
+    process.env.POSTGRES_URI?.trim() ||
+    process.env.DATABASE_URL?.trim() ||
+    'postgres://user:password@localhost:5432/clerky_db',
 };
 
 // Socket.io Configuration (backend principal)

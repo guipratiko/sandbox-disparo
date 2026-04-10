@@ -3,18 +3,43 @@
  * - PostgreSQL: Templates, Dispatches
  */
 
-import { Pool, PoolClient } from 'pg';
+import { Pool, PoolClient, QueryResult, QueryResultRow } from 'pg';
 import { POSTGRES_CONFIG } from './constants';
+import { retryTransientAsync } from '../utils/transientErrors';
+
+function postgresPoolInt(envKey: string, fallback: number, min: number, max: number): number {
+  const raw = process.env[envKey];
+  const n = raw ? parseInt(raw, 10) : NaN;
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(max, Math.max(min, n));
+}
+
+const postgresConnectionString = POSTGRES_CONFIG.URI;
+const connectionStringForLog = postgresConnectionString.replace(/:[^:@]+@/, ':****@');
+console.log(`📡 Disparo PostgreSQL: ${connectionStringForLog}`);
+
+const POSTGRES_POOL_MAX = postgresPoolInt('POSTGRES_POOL_MAX', 20, 2, 100);
+const POSTGRES_POOL_CONNECTION_TIMEOUT_MS = postgresPoolInt(
+  'POSTGRES_POOL_CONNECTION_TIMEOUT_MS',
+  parseInt(process.env.PG_CONNECTION_TIMEOUT_MS || '30000', 10),
+  3000,
+  120_000
+);
+const POSTGRES_POOL_IDLE_MS = postgresPoolInt('POSTGRES_POOL_IDLE_TIMEOUT_MS', 30_000, 5000, 300_000);
+
+console.log(
+  `📡 Disparo pool: max=${POSTGRES_POOL_MAX}, connectionTimeout=${POSTGRES_POOL_CONNECTION_TIMEOUT_MS}ms, idle=${POSTGRES_POOL_IDLE_MS}ms`
+);
 
 // ============================================
 // PostgreSQL (Templates, Dispatches)
 // ============================================
 export const pgPool = new Pool({
-  connectionString: POSTGRES_CONFIG.URI,
-  max: 20,
-  idleTimeoutMillis: 30000,
-  // 2s é curto para Postgres remoto (Docker/cloud); evita "connection timeout" intermitente
-  connectionTimeoutMillis: parseInt(process.env.PG_CONNECTION_TIMEOUT_MS || '30000', 10),
+  connectionString: postgresConnectionString,
+  max: POSTGRES_POOL_MAX,
+  idleTimeoutMillis: POSTGRES_POOL_IDLE_MS,
+  connectionTimeoutMillis: POSTGRES_POOL_CONNECTION_TIMEOUT_MS,
+  keepAlive: true,
 });
 
 // Event listeners para PostgreSQL (sem log para evitar spam)
@@ -26,7 +51,7 @@ pgPool.on('error', (err: Error) => {
 // Função para testar conexão PostgreSQL
 export const testPostgreSQL = async (): Promise<boolean> => {
   try {
-    const client = await pgPool.connect();
+    const client = await getPostgreSQLClient();
     await client.query('SELECT NOW()');
     client.release();
     return true;
@@ -38,8 +63,22 @@ export const testPostgreSQL = async (): Promise<boolean> => {
 
 // Função para obter cliente PostgreSQL (para transações)
 export const getPostgreSQLClient = async (): Promise<PoolClient> => {
-  return await pgPool.connect();
+  return await retryTransientAsync(() => pgPool.connect(), {
+    attempts: parseInt(process.env.PG_CONNECT_RETRY_ATTEMPTS || '4', 10),
+    baseDelayMs: parseInt(process.env.PG_CONNECT_RETRY_BASE_MS || '600', 10),
+  });
 };
+
+/** Query com retentativa em falhas transitórias de DNS/rede (EAI_AGAIN, etc.). */
+export async function pgQuery<T extends QueryResultRow = any>(
+  queryText: string,
+  values?: unknown[]
+): Promise<QueryResult<T>> {
+  return retryTransientAsync(() => pgPool.query<T>(queryText, values), {
+    attempts: parseInt(process.env.PG_QUERY_RETRY_ATTEMPTS || '4', 10),
+    baseDelayMs: parseInt(process.env.PG_QUERY_RETRY_BASE_MS || '800', 10),
+  });
+}
 
 // ============================================
 // Função para conectar todos os bancos

@@ -25,7 +25,7 @@ import { parseCSVFile, parseInputText } from '../utils/csvParser';
 import { ensureNormalizedPhone } from '../utils/numberNormalizer';
 import { DEFAULT_TIMEZONE } from '../config/constants';
 import { getInstanceInfo } from '../utils/instanceHelper';
-import { pgPool } from '../config/databases';
+import { pgQuery } from '../config/databases';
 import multer from 'multer';
 
 /** Payload alinhado ao Frontend (settings, schedule, stats + campos legados sentCount etc.) */
@@ -153,7 +153,7 @@ export const createDispatch = async (
 
       // Buscar contatos das colunas do PostgreSQL
       for (const columnId of columnIds) {
-        const result = await pgPool.query(
+        const result = await pgQuery(
           `SELECT phone, name, column_id FROM contacts WHERE user_id = $1 AND instance_id = $2 AND column_id = $3`,
           [userId, instanceId, columnId]
         );

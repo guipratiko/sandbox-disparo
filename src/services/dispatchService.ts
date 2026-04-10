@@ -2,7 +2,7 @@
  * Service para gerenciamento de Disparos
  */
 
-import { pgPool } from '../config/databases';
+import { pgQuery } from '../config/databases';
 import { parseJsonbField, stringifyJsonb } from '../utils/dbHelpers';
 import {
   Dispatch,
@@ -55,7 +55,7 @@ export class DispatchService {
       data.userTimezone || null,
     ];
 
-    const result = await pgPool.query(query, values);
+    const result = await pgQuery(query, values);
 
     if (result.rows.length === 0) {
       throw new Error('Falha ao criar disparo');
@@ -70,7 +70,7 @@ export class DispatchService {
       WHERE id = $1 AND user_id = $2
     `;
 
-    const result = await pgPool.query(query, [dispatchId, userId]);
+    const result = await pgQuery(query, [dispatchId, userId]);
 
     if (result.rows.length === 0) {
       return null;
@@ -96,7 +96,7 @@ export class DispatchService {
 
     query += ` ORDER BY created_at DESC`;
 
-    const result = await pgPool.query(query, params);
+    const result = await pgQuery(query, params);
 
     return result.rows.map((row: Record<string, any>) => this.mapRowToDispatch(row));
   }
@@ -164,7 +164,7 @@ export class DispatchService {
       RETURNING *
     `;
 
-    const result = await pgPool.query(query, params);
+    const result = await pgQuery(query, params);
 
     if (result.rows.length === 0) {
       return null;
@@ -253,7 +253,7 @@ export class DispatchService {
       RETURNING *
     `;
 
-    const result = await pgPool.query(query, params);
+    const result = await pgQuery(query, params);
 
     if (result.rows.length === 0) {
       return null;
@@ -277,7 +277,7 @@ export class DispatchService {
       WHERE id = $1 AND user_id = $2
     `;
 
-    const result = await pgPool.query(query, [dispatchId, userId]);
+    const result = await pgQuery(query, [dispatchId, userId]);
 
     return result.rowCount !== null && result.rowCount > 0;
   }
@@ -293,7 +293,7 @@ export class DispatchService {
       ORDER BY created_at ASC
     `;
 
-    const result = await pgPool.query(query);
+    const result = await pgQuery(query);
 
     return result.rows.map((row: Record<string, any>) => this.mapRowToDispatch(row));
   }

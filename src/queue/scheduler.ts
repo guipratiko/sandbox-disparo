@@ -7,7 +7,7 @@ import { DispatchService } from '../services/dispatchService';
 import { DispatchSchedule } from '../types/dispatch';
 import { TemplateService } from '../services/templateService';
 import { processContact, calculateDelay } from '../services/dispatchProcessor';
-import { pgPool } from '../config/databases';
+import { pgQuery } from '../config/databases';
 import { parseJsonbField } from '../utils/dbHelpers';
 import {
   hasStartDatePassed,
@@ -239,7 +239,7 @@ const runProcessScheduledDispatches = async (): Promise<void> => {
   // Limpar entradas antigas do Map de processamento
   cleanupOldProcessingEntries();
   
-  const runningDispatches = await pgPool.query(
+  const runningDispatches = await pgQuery(
     `SELECT id, user_id, instance_id, instance_name, template_id, name, status, 
             settings, schedule, contacts_data, stats, default_name, user_timezone,
             created_at, updated_at, started_at, completed_at 
@@ -328,7 +328,7 @@ const runProcessScheduledDispatches = async (): Promise<void> => {
 export const resumeInProgressDispatches = async (): Promise<void> => {
   try {
     // Buscar todos os disparos com status 'running' que não foram concluídos
-    const runningDispatches = await pgPool.query(
+    const runningDispatches = await pgQuery(
       `SELECT id, user_id, instance_id, instance_name, template_id, name, status, 
               settings, schedule, contacts_data, stats, default_name, user_timezone,
               created_at, updated_at, started_at, completed_at 
