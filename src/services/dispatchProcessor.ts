@@ -218,8 +218,8 @@ const stepDelayBeforeSendMs = (step: SequenceStep): number => {
 
 /**
  * Etapas 2+ da sequência rodam em background: não bloqueiam o próximo contato do disparo.
- * - Delay da 1ª etapa do template é ignorado no envio inicial (espaçamento vem do disparo: fast/normal/slow/randomized).
- * - A partir da 2ª etapa: aplica-se o delay configurado naquela etapa (ex.: 2h antes da imagem) e, se speed for randomized, um intervalo extra anti-detecção.
+ * - Ritmo **entre contatos** continua sendo só a velocidade do disparo (fast/normal/slow/randomized) no scheduler.
+ * - Ritmo **entre etapas** da sequência usa apenas os delays configurados em cada etapa do template (sem somar jitter randomized por etapa).
  */
 const runSequenceTailAsync = async (params: {
   dispatchId: string;
@@ -249,11 +249,6 @@ const runSequenceTailAsync = async (params: {
     const templateDelayMs = stepDelayBeforeSendMs(step);
     if (templateDelayMs > 0) {
       await new Promise((resolve) => setTimeout(resolve, templateDelayMs));
-    }
-
-    if (params.settings.speed === 'randomized') {
-      const jitterMs = calculateDelay('randomized');
-      await new Promise((resolve) => setTimeout(resolve, jitterMs));
     }
 
     const stepRemoteJid = lastResult?.remoteJid || params.initialRemoteJid;
@@ -442,7 +437,7 @@ export const processContact = async (
         du === 'seconds' || du === 'minutes' || du === 'hours' ? du : undefined,
     };
 
-    /** Sequência: só a 1ª etapa bloqueia o disparo; demais etapas em background */
+    /** Sequência: 1ª etapa bloqueia o disparo (inclui delay configurado nela); demais etapas em background */
     if (template.type === 'sequence') {
       const steps = personalizedContent.steps as SequenceStep[] | undefined;
       if (!steps?.length) {
@@ -451,6 +446,20 @@ export const processContact = async (
       }
 
       const firstStep = steps[0];
+      const firstDelayMs = stepDelayBeforeSendMs(firstStep);
+      if (firstDelayMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, firstDelayMs));
+      }
+
+      const dispatchAfterFirstDelay = await DispatchService.getById(dispatchId, userId);
+      if (!dispatchAfterFirstDelay || dispatchAfterFirstDelay.status !== 'running') {
+        await DispatchService.updateStats(dispatchId, userId, { failed: 1 });
+        return {
+          success: false,
+          error: 'Disparo interrompido antes da 1ª etapa (pausado ou cancelado)',
+        };
+      }
+
       try {
         sendResult = await retryWithBackoff(() =>
           processSequenceStep(
