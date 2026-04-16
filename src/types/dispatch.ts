@@ -116,8 +116,11 @@ export interface DispatchSettings {
   autoDelete?: boolean;
   deleteDelay?: number;
   deleteDelayUnit?: 'seconds' | 'minutes' | 'hours';
-  /** Quando true, cada envio bem-sucedido é gravado em contacts/messages (chat CRM). */
-  showInChat?: boolean;
+  /**
+   * Quando false, o Disparo-Clerky regista message_id para o webhook do Backend não gravar a outbound no CRM.
+   * Default true (comportamento anterior).
+   */
+  showMessagesInCrmChat?: boolean;
 }
 
 export interface DispatchSchedule {

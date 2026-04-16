@@ -8,12 +8,18 @@ import { replaceVariablesInContent } from '../utils/variableReplacer';
 import { ensureNormalizedPhone } from '../utils/numberNormalizer';
 import { TemplateService } from './templateService';
 import { DispatchService } from './dispatchService';
-import { ContactData, SequenceStep, DispatchSettings, TemplateType } from '../types/dispatch';
-import {
-  mirrorDispatchMessageToCrmIfEnabled,
-  buildCrmMirrorFromTemplateType,
-  buildCrmMirrorFromSequenceStep,
-} from './crmDispatchMirror';
+import { ContactData, SequenceStep, DispatchSettings } from '../types/dispatch';
+import { registerDispatchCrmOutboundSuppress } from './dispatchCrmSuppressRegistration';
+
+async function maybeRegisterOutboundCrmSuppress(
+  instanceId: string | undefined,
+  messageId: string | undefined,
+  settings: DispatchSettings
+): Promise<void> {
+  if (!instanceId?.trim() || !messageId?.trim()) return;
+  if (settings.showMessagesInCrmChat !== false) return;
+  await registerDispatchCrmOutboundSuppress(instanceId.trim(), messageId.trim());
+}
 
 type OfficialContext = { integration: string; phone_number_id: string } | undefined;
 
@@ -229,8 +235,8 @@ const stepDelayBeforeSendMs = (step: SequenceStep): number => {
 const runSequenceTailAsync = async (params: {
   dispatchId: string;
   userId: string;
-  instanceId: string;
   instanceName: string;
+  instanceId: string;
   steps: SequenceStep[];
   startIndex: number;
   normalizedContact: ContactData;
@@ -276,27 +282,11 @@ const runSequenceTailAsync = async (params: {
       return;
     }
 
-    const seqPersonalized = replaceVariablesInContent(
-      step.content,
-      params.normalizedContact,
-      params.defaultName || 'Cliente'
-    ) as Record<string, unknown>;
-    const seqMirror = buildCrmMirrorFromSequenceStep(step, seqPersonalized);
-    void mirrorDispatchMessageToCrmIfEnabled({
-      showInChat: params.settings.showInChat === true,
-      userId: params.userId,
-      instanceId: params.instanceId,
-      remoteJid: lastResult.remoteJid,
-      messageId: lastResult.messageId,
-      messageType: seqMirror.messageType,
-      content: seqMirror.content,
-      mediaUrl: seqMirror.mediaUrl,
-      contactName:
-        params.normalizedContact.name ||
-        params.normalizedContact.formattedPhone ||
-        params.normalizedContact.phone,
-      contactPhone: params.normalizedContact.formattedPhone || params.normalizedContact.phone,
-    });
+    await maybeRegisterOutboundCrmSuppress(
+      params.instanceId,
+      lastResult.messageId,
+      params.settings
+    );
 
     if (params.settings.autoDelete && lastResult.messageId && params.settings.deleteDelay) {
       const unit = params.settings.deleteDelayUnit;
@@ -458,10 +448,12 @@ export const processContact = async (
 
     const du = settings.deleteDelayUnit;
     const dispatchSettings: DispatchSettings = {
-      ...settings,
-      speed: (settings.speed || 'normal') as DispatchSettings['speed'],
+      speed: settings.speed as DispatchSettings['speed'],
+      autoDelete: settings.autoDelete,
+      deleteDelay: settings.deleteDelay,
       deleteDelayUnit:
         du === 'seconds' || du === 'minutes' || du === 'hours' ? du : undefined,
+      showMessagesInCrmChat: settings.showMessagesInCrmChat,
     };
 
     /** Sequência: 1ª etapa bloqueia o disparo (inclui delay configurado nela); demais etapas em background */
@@ -512,27 +504,8 @@ export const processContact = async (
       const messageId = sendResult.messageId;
       const realRemoteJid = sendResult.remoteJid || remoteJid;
 
+      await maybeRegisterOutboundCrmSuppress(dispatch.instanceId, messageId, dispatchSettings);
       await DispatchService.updateStats(dispatchId, userId, { sent: 1 });
-
-      const firstPersonalized = replaceVariablesInContent(
-        firstStep.content,
-        normalizedContact,
-        defaultName || 'Cliente'
-      ) as Record<string, unknown>;
-      const firstMirror = buildCrmMirrorFromSequenceStep(firstStep, firstPersonalized);
-      void mirrorDispatchMessageToCrmIfEnabled({
-        showInChat: settings.showInChat === true,
-        userId,
-        instanceId: dispatch.instanceId,
-        remoteJid: realRemoteJid,
-        messageId,
-        messageType: firstMirror.messageType,
-        content: firstMirror.content,
-        mediaUrl: firstMirror.mediaUrl,
-        contactName:
-          normalizedContact.name || normalizedContact.formattedPhone || normalizedPhone,
-        contactPhone: normalizedContact.formattedPhone || normalizedPhone,
-      });
 
       if (settings.autoDelete && messageId && settings.deleteDelay) {
         const deleteDelayMs = calculateDeleteDelay(settings.deleteDelay, settings.deleteDelayUnit);
@@ -550,8 +523,8 @@ export const processContact = async (
         void runSequenceTailAsync({
           dispatchId,
           userId,
-          instanceId: dispatch.instanceId,
           instanceName,
+          instanceId: dispatch.instanceId,
           steps,
           startIndex: 1,
           normalizedContact,
@@ -616,25 +589,8 @@ export const processContact = async (
     const messageId = sendResult?.messageId;
     const realRemoteJid = sendResult?.remoteJid || remoteJid;
 
+    await maybeRegisterOutboundCrmSuppress(dispatch.instanceId, messageId, settings);
     await DispatchService.updateStats(dispatchId, userId, { sent: 1 });
-
-    const tplMirror = buildCrmMirrorFromTemplateType(
-      template.type as TemplateType,
-      personalizedContent as Record<string, unknown>
-    );
-    void mirrorDispatchMessageToCrmIfEnabled({
-      showInChat: settings.showInChat === true,
-      userId,
-      instanceId: dispatch.instanceId,
-      remoteJid: realRemoteJid,
-      messageId: messageId!,
-      messageType: tplMirror.messageType,
-      content: tplMirror.content,
-      mediaUrl: tplMirror.mediaUrl,
-      contactName:
-        normalizedContact.name || normalizedContact.formattedPhone || normalizedPhone,
-      contactPhone: normalizedContact.formattedPhone || normalizedPhone,
-    });
 
     // AutoDelete: usar realRemoteJid (retornado pela Evolution API)
     if (settings.autoDelete && messageId && settings.deleteDelay) {
