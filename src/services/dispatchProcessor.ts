@@ -9,6 +9,11 @@ import { ensureNormalizedPhone } from '../utils/numberNormalizer';
 import { TemplateService } from './templateService';
 import { DispatchService } from './dispatchService';
 import { ContactData, SequenceStep, DispatchSettings } from '../types/dispatch';
+import { tryMirrorEvolutionDispatchToCrm } from '../utils/dispatchCrmMirror';
+import {
+  mirrorPayloadForSequenceStep,
+  mirrorPayloadForTemplate,
+} from '../utils/dispatchCrmMirrorPayload';
 
 type OfficialContext = { integration: string; phone_number_id: string } | undefined;
 
@@ -224,7 +229,10 @@ const stepDelayBeforeSendMs = (step: SequenceStep): number => {
 const runSequenceTailAsync = async (params: {
   dispatchId: string;
   userId: string;
+  instanceId: string;
   instanceName: string;
+  integration?: string | null;
+  mirrorDispatchToCrm: boolean;
   steps: SequenceStep[];
   startIndex: number;
   normalizedContact: ContactData;
@@ -268,6 +276,24 @@ const runSequenceTailAsync = async (params: {
       const msg = error instanceof Error ? error.message : String(error);
       console.error(`❌ [sequence tail] etapa ${i + 1} falhou (dispatch ${params.dispatchId}):`, msg);
       return;
+    }
+
+    if (params.mirrorDispatchToCrm) {
+      const personalized = replaceVariablesInContent(
+        step.content,
+        params.normalizedContact,
+        params.defaultName || 'Cliente'
+      ) as Record<string, unknown>;
+      const crmPayload = mirrorPayloadForSequenceStep(step, personalized);
+      void tryMirrorEvolutionDispatchToCrm({
+        userId: params.userId,
+        instanceId: params.instanceId,
+        integration: params.integration,
+        mirrorDispatchToCrm: true,
+        remoteJid: lastResult.remoteJid,
+        messageId: lastResult.messageId,
+        payload: crmPayload,
+      });
     }
 
     if (params.settings.autoDelete && lastResult.messageId && params.settings.deleteDelay) {
@@ -374,6 +400,7 @@ const retryWithBackoff = async <T>(
 export const processContact = async (
   dispatchId: string,
   userId: string,
+  instanceId: string,
   instanceName: string,
   templateId: string,
   contact: ContactData,
@@ -398,6 +425,8 @@ export const processContact = async (
     if (dispatch.status !== 'running') {
       return { success: false, error: 'Disparo não está em execução' };
     }
+
+    const mirrorDispatchToCrm = dispatch.settings.mirrorDispatchToCrm === true;
 
     const normalizedPhone = ensureNormalizedPhone(contact.phone) || contact.phone;
     const formattedPhone = contact.formattedPhone 
@@ -485,6 +514,24 @@ export const processContact = async (
       const messageId = sendResult.messageId;
       const realRemoteJid = sendResult.remoteJid || remoteJid;
 
+      if (mirrorDispatchToCrm) {
+        const firstPersonalized = replaceVariablesInContent(
+          firstStep.content,
+          normalizedContact,
+          defaultName || 'Cliente'
+        ) as Record<string, unknown>;
+        const crmPayload = mirrorPayloadForSequenceStep(firstStep, firstPersonalized);
+        void tryMirrorEvolutionDispatchToCrm({
+          userId,
+          instanceId,
+          integration,
+          mirrorDispatchToCrm: true,
+          remoteJid: realRemoteJid,
+          messageId,
+          payload: crmPayload,
+        });
+      }
+
       await DispatchService.updateStats(dispatchId, userId, { sent: 1 });
 
       if (settings.autoDelete && messageId && settings.deleteDelay) {
@@ -503,7 +550,10 @@ export const processContact = async (
         void runSequenceTailAsync({
           dispatchId,
           userId,
+          instanceId,
           instanceName,
+          integration,
+          mirrorDispatchToCrm,
           steps,
           startIndex: 1,
           normalizedContact,
@@ -567,6 +617,22 @@ export const processContact = async (
 
     const messageId = sendResult?.messageId;
     const realRemoteJid = sendResult?.remoteJid || remoteJid;
+
+    if (mirrorDispatchToCrm && messageId) {
+      const crmPayload = mirrorPayloadForTemplate(
+        template.type,
+        personalizedContent as Record<string, unknown>
+      );
+      void tryMirrorEvolutionDispatchToCrm({
+        userId,
+        instanceId,
+        integration,
+        mirrorDispatchToCrm: true,
+        remoteJid: realRemoteJid,
+        messageId,
+        payload: crmPayload,
+      });
+    }
 
     await DispatchService.updateStats(dispatchId, userId, { sent: 1 });
 

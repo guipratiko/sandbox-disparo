@@ -116,6 +116,11 @@ export interface DispatchSettings {
   autoDelete?: boolean;
   deleteDelay?: number;
   deleteDelayUnit?: 'seconds' | 'minutes' | 'hours';
+  /**
+   * Se true, cada envio bem-sucedido (Evolution) é gravado em contacts/messages do CRM no Backend.
+   * Inclui todas as etapas de templates em sequência. Ignorado para API oficial (WHATSAPP-CLOUD).
+   */
+  mirrorDispatchToCrm?: boolean;
 }
 
 export interface DispatchSchedule {

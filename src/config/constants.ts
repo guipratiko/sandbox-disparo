@@ -33,6 +33,9 @@ export const SOCKET_CONFIG = {
   URL: process.env.SOCKET_URL || 'http://localhost:4331',
 };
 
+/** URL do Backend OnlyFlow (espelho CRM do disparo Evolution). Ver também DISPATCH_CLERKY_INTERNAL_KEY no .env. */
+export const BACKEND_URL = (process.env.BACKEND_URL || 'http://localhost:4331').replace(/\/$/, '');
+
 // Evolution API Configuration
 export const EVOLUTION_CONFIG = {
   HOST: process.env.EVOLUTION_HOST || 'evo.clerky.com.br',
