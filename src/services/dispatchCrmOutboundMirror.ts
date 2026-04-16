@@ -4,12 +4,8 @@
  */
 
 import { pgQuery } from '../config/databases';
-import {
-  extractPhoneFromJid,
-  normalizePhone,
-  toStorageWhatsappRemoteJid,
-  whatsappRemoteJidLookupVariants,
-} from '../utils/numberNormalizer';
+import { toStorageWhatsappRemoteJid, whatsappRemoteJidLookupVariants } from '../utils/numberNormalizer';
+import { formatWhatsAppPhone } from '../utils/crmFormatters';
 import { emitDispatchCrmOutboundMirrored } from '../socket/socketClient';
 import { registerDispatchCrmOutboundSuppress } from './dispatchCrmSuppressRegistration';
 import type { DispatchSettings } from '../types/dispatch';
@@ -105,6 +101,8 @@ export async function applyDispatchOutboundCrmVisibility(
     messageType: string;
     content: string;
     mediaUrl?: string | null;
+    /** Horário da mensagem (Evolution); fallback no mirror se omitido. */
+    sentAt?: Date;
   }
 ): Promise<void> {
   const iid = args.instanceId?.trim();
@@ -124,6 +122,7 @@ export async function applyDispatchOutboundCrmVisibility(
     messageType: args.messageType,
     content: args.content,
     mediaUrl: args.mediaUrl,
+    sentAt: args.sentAt,
   });
 }
 
@@ -135,6 +134,7 @@ export async function mirrorDispatchOutboundToCrm(params: {
   messageType: string;
   content: string;
   mediaUrl?: string | null;
+  sentAt?: Date;
 }): Promise<void> {
   const mid = params.messageId?.trim();
   if (!mid || !params.userId?.trim() || !params.instanceId?.trim()) return;
@@ -151,8 +151,7 @@ export async function mirrorDispatchOutboundToCrm(params: {
         return;
       }
       const storageJid = toStorageWhatsappRemoteJid(rjid);
-      const digits = extractPhoneFromJid(storageJid);
-      const phone = normalizePhone(digits, '55') || digits;
+      const phone = formatWhatsAppPhone(storageJid);
       try {
         contact = await insertContact(params.userId, params.instanceId, storageJid, phone, columnId);
       } catch (e: unknown) {
@@ -171,12 +170,16 @@ export async function mirrorDispatchOutboundToCrm(params: {
     const mt = params.messageType || 'conversation';
     const media = params.mediaUrl ?? null;
 
+    const messageTs = params.sentAt instanceof Date && !Number.isNaN(params.sentAt.getTime())
+      ? params.sentAt
+      : new Date();
+
     const ins = await pgQuery(
       `INSERT INTO messages (
         user_id, instance_id, contact_id, remote_jid,
         message_id, from_me, message_type, content,
         media_url, timestamp, read, automated_outbound
-      ) VALUES ($1, $2, $3, $4, $5, TRUE, $6, $7, $8, NOW(), TRUE, FALSE)
+      ) VALUES ($1, $2, $3, $4, $5, TRUE, $6, $7, $8, $9, TRUE, FALSE)
       ON CONFLICT (message_id, instance_id) DO NOTHING
       RETURNING id`,
       [
@@ -188,6 +191,7 @@ export async function mirrorDispatchOutboundToCrm(params: {
         mt,
         content,
         media,
+        messageTs,
       ]
     );
 

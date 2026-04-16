@@ -14,6 +14,8 @@ function cleanNumber(remoteJid: string): string {
 export interface SendResult {
   messageId: string;
   remoteJid: string;
+  /** Quando a API não devolve timestamp da mensagem (ex.: Cloud). */
+  sentAt?: Date;
 }
 
 export async function sendViaOficialAPI(
@@ -35,5 +37,5 @@ export async function sendViaOficialAPI(
   if (!messageId) {
     throw new Error('OficialAPI não retornou messageId');
   }
-  return { messageId, remoteJid };
+  return { messageId, remoteJid, sentAt: new Date() };
 }

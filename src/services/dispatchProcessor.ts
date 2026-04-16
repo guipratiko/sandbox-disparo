@@ -3,7 +3,7 @@
  */
 
 import { requestEvolutionAPI } from '../utils/evolutionAPI';
-import { sendViaOficialAPI } from '../utils/oficialAPI';
+import { sendViaOficialAPI, type SendResult } from '../utils/oficialAPI';
 import { replaceVariablesInContent } from '../utils/variableReplacer';
 import { ensureNormalizedPhone } from '../utils/numberNormalizer';
 import { TemplateService } from './templateService';
@@ -11,6 +11,7 @@ import { DispatchService } from './dispatchService';
 import { ContactData, SequenceStep, DispatchSettings } from '../types/dispatch';
 import { applyDispatchOutboundCrmVisibility } from './dispatchCrmOutboundMirror';
 import { crmMirrorPayloadFromDispatchTemplate, crmMirrorPayloadFromSequenceStep } from '../utils/crmMirrorPayload';
+import { parseEvolutionOutboundTimestamp } from '../utils/crmFormatters';
 
 type OfficialContext = { integration: string; phone_number_id: string } | undefined;
 
@@ -77,26 +78,21 @@ const deleteMessage = async (
 };
 
 /**
- * Interface para retorno das funções de envio
- */
-interface SendResult {
-  messageId: string;
-  remoteJid: string; // remoteJid real retornado pela Evolution API
-}
-
-/**
- * Extrair messageId e remoteJid da resposta da Evolution API
+ * Extrair messageId, remoteJid e timestamp da resposta da Evolution API
  */
 const extractSendResult = (response: any, fallbackRemoteJid: string): SendResult => {
   const responseData = response?.data || response;
   const messageId = responseData?.key?.id || responseData?.messageId;
   const realRemoteJid = responseData?.key?.remoteJid || fallbackRemoteJid;
-  
+  const sentAt = parseEvolutionOutboundTimestamp(
+    responseData && typeof responseData === 'object' ? responseData : undefined
+  );
+
   if (!messageId) {
     throw new Error('Não foi possível obter messageId válido da Evolution API');
   }
 
-  return { messageId, remoteJid: realRemoteJid };
+  return { messageId, remoteJid: realRemoteJid, sentAt };
 };
 
 /**
@@ -286,6 +282,7 @@ const runSequenceTailAsync = async (params: {
       messageType: tailMirror.messageType,
       content: tailMirror.content,
       mediaUrl: tailMirror.mediaUrl,
+      sentAt: lastResult.sentAt,
     });
 
     if (params.settings.autoDelete && lastResult.messageId && params.settings.deleteDelay) {
@@ -517,6 +514,7 @@ export const processContact = async (
         messageType: seqMirror.messageType,
         content: seqMirror.content,
         mediaUrl: seqMirror.mediaUrl,
+        sentAt: sendResult.sentAt,
       });
       await DispatchService.updateStats(dispatchId, userId, { sent: 1 });
 
@@ -614,6 +612,7 @@ export const processContact = async (
       messageType: tplMirror.messageType,
       content: tplMirror.content,
       mediaUrl: tplMirror.mediaUrl,
+      sentAt: sendResult?.sentAt,
     });
     await DispatchService.updateStats(dispatchId, userId, { sent: 1 });
 
