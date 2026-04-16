@@ -154,7 +154,6 @@ const processDispatch = async (dispatchId: string, userId: string): Promise<void
       await processContact(
         dispatchId,
         dispatch.userId,
-        dispatch.instanceId,
         dispatch.instanceName,
         dispatch.templateId,
         contact,
