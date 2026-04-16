@@ -1,9 +1,10 @@
 /**
- * Espelha envios do disparo nas tabelas CRM (contacts / messages) do mesmo Postgres,
- * quando o utilizador ativa a opção no disparo.
+ * Espelha envios do disparo no CRM (OnlyFlow Backend), quando o utilizador ativa a opção no disparo.
+ * Requer DISPATCH_CRM_MIRROR_SECRET igual ao do Backend e BACKEND_URL acessível.
  */
 
-import { pgPool } from '../config/databases';
+import axios from 'axios';
+import { DISPATCH_CRM_MIRROR } from '../config/constants';
 import type { SequenceStep, TemplateType } from '../types/dispatch';
 
 export type MirrorDispatchCrmParams = {
@@ -84,7 +85,7 @@ export function buildCrmMirrorFromSequenceStep(
 }
 
 /**
- * Insere mensagem outbound no CRM (idempotente por message_id + instance_id).
+ * Chama o Backend para gravar a mensagem outbound no CRM (idempotente no PG).
  * Não propaga erro ao fluxo do disparo — só regista em log.
  */
 export async function mirrorDispatchMessageToCrmIfEnabled(params: MirrorDispatchCrmParams): Promise<void> {
@@ -92,98 +93,49 @@ export async function mirrorDispatchMessageToCrmIfEnabled(params: MirrorDispatch
     return;
   }
 
-  const {
-    userId,
-    instanceId,
-    remoteJid,
-    messageId,
-    messageType,
-    content,
-    mediaUrl,
-    contactName,
-    contactPhone,
-  } = params;
+  const secret = DISPATCH_CRM_MIRROR.SECRET;
+  if (!secret) {
+    console.warn(
+      '[CRM disparo] DISPATCH_CRM_MIRROR_SECRET não definido no Disparo-Clerky — espelho CRM ignorado. Defina o mesmo valor no Backend.'
+    );
+    return;
+  }
 
-  const client = await pgPool.connect();
+  const base = DISPATCH_CRM_MIRROR.BACKEND_URL;
+  const url = `${base}/api/internal/dispatch-crm-mirror`;
+
   try {
-    await client.query('BEGIN');
-
-    const colRes = await client.query<{ id: string }>(
-      `SELECT id FROM crm_columns WHERE user_id = $1 ORDER BY order_index ASC LIMIT 1`,
-      [userId]
-    );
-    const columnId = colRes.rows[0]?.id;
-    if (!columnId) {
-      await client.query('ROLLBACK');
-      console.warn('[CRM disparo] Sem colunas CRM — abra o Kanban no OnlyFlow uma vez.');
-      return;
-    }
-
-    let contactId: string;
-    const existing = await client.query<{ id: string }>(
-      `SELECT id FROM contacts WHERE user_id = $1 AND instance_id = $2 AND remote_jid = $3`,
-      [userId, instanceId, remoteJid]
-    );
-
-    if (existing.rows.length > 0) {
-      contactId = existing.rows[0].id;
-    } else {
-      const name = (contactName || contactPhone || 'Contato').slice(0, 255);
-      const phone = (contactPhone || remoteJid.replace(/@.+$/, '')).slice(0, 20);
-      try {
-        const ins = await client.query<{ id: string }>(
-          `INSERT INTO contacts (user_id, instance_id, remote_jid, phone, name, profile_picture, column_id, unread_count)
-           VALUES ($1, $2, $3, $4, $5, NULL, $6, 0)
-           RETURNING id`,
-          [userId, instanceId, remoteJid, phone, name, columnId]
-        );
-        contactId = ins.rows[0].id;
-      } catch (err: unknown) {
-        const code = err && typeof err === 'object' && 'code' in err ? String((err as { code: string }).code) : '';
-        if (code !== '23505') {
-          throw err;
-        }
-        const again = await client.query<{ id: string }>(
-          `SELECT id FROM contacts WHERE user_id = $1 AND instance_id = $2 AND remote_jid = $3`,
-          [userId, instanceId, remoteJid]
-        );
-        if (again.rows.length === 0) {
-          throw err;
-        }
-        contactId = again.rows[0].id;
+    const response = await axios.post(
+      url,
+      {
+        userId: params.userId,
+        instanceId: params.instanceId,
+        remoteJid: params.remoteJid,
+        messageId: params.messageId,
+        messageType: params.messageType,
+        content: params.content,
+        mediaUrl: params.mediaUrl,
+        contactName: params.contactName,
+        contactPhone: params.contactPhone,
+      },
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Dispatch-Crm-Mirror-Secret': secret,
+        },
+        timeout: 15_000,
+        validateStatus: () => true,
       }
+    );
+
+    if (response.status >= 400) {
+      const msg =
+        response.data && typeof response.data === 'object' && 'message' in response.data
+          ? String((response.data as { message?: string }).message)
+          : response.statusText;
+      console.error(`[CRM disparo] Backend respondeu ${response.status}: ${msg}`);
     }
-
-    const ts = new Date();
-    const safeContent = content != null && String(content).trim() !== '' ? String(content) : ' ';
-    const safeMedia = mediaUrl && String(mediaUrl).trim() !== '' ? String(mediaUrl).trim() : null;
-
-    await client.query(
-      `INSERT INTO messages (
-        user_id, instance_id, contact_id, remote_jid, message_id, from_me, message_type, content, media_url, timestamp, read, automated_outbound
-      ) VALUES ($1, $2, $3, $4, $5, true, $6, $7, $8, $9, true, true)
-      ON CONFLICT (message_id, instance_id) DO NOTHING`,
-      [userId, instanceId, contactId, remoteJid, messageId, messageType, safeContent, safeMedia, ts]
-    );
-
-    await client.query(
-      `UPDATE contacts SET
-        last_message = LEFT($1::text, 100),
-        last_message_at = $2,
-        updated_at = NOW()
-       WHERE id = $3::uuid`,
-      [safeContent, ts, contactId]
-    );
-
-    await client.query('COMMIT');
   } catch (e) {
-    try {
-      await client.query('ROLLBACK');
-    } catch {
-      /* ignore */
-    }
-    console.error('[CRM disparo] Falha ao espelhar mensagem no CRM:', e);
-  } finally {
-    client.release();
+    console.error('[CRM disparo] Falha ao chamar espelho CRM no Backend:', e);
   }
 }

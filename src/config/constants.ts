@@ -33,6 +33,12 @@ export const SOCKET_CONFIG = {
   URL: process.env.SOCKET_URL || 'http://localhost:4331',
 };
 
+/** Espelho de disparos no CRM via API do Backend (mesmo valor de DISPATCH_CRM_MIRROR_SECRET no Backend). */
+export const DISPATCH_CRM_MIRROR = {
+  SECRET: process.env.DISPATCH_CRM_MIRROR_SECRET?.trim() || '',
+  BACKEND_URL: (process.env.BACKEND_URL || 'http://localhost:4331').replace(/\/$/, ''),
+};
+
 // Evolution API Configuration
 export const EVOLUTION_CONFIG = {
   HOST: process.env.EVOLUTION_HOST || 'evo.clerky.com.br',
