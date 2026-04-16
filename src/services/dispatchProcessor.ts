@@ -8,12 +8,12 @@ import { replaceVariablesInContent } from '../utils/variableReplacer';
 import { ensureNormalizedPhone } from '../utils/numberNormalizer';
 import { TemplateService } from './templateService';
 import { DispatchService } from './dispatchService';
-import { ContactData, SequenceStep, DispatchSettings } from '../types/dispatch';
+import { ContactData, SequenceStep, DispatchSettings, TemplateType } from '../types/dispatch';
 import {
-  mirrorOutboundToCrmIfEnabled,
-  crmMirrorFieldsFromTemplate,
-  crmMirrorFieldsFromSequenceStep,
-} from './dispatchCrmMirror';
+  mirrorDispatchMessageToCrmIfEnabled,
+  buildCrmMirrorFromTemplateType,
+  buildCrmMirrorFromSequenceStep,
+} from './crmDispatchMirror';
 
 type OfficialContext = { integration: string; phone_number_id: string } | undefined;
 
@@ -239,8 +239,6 @@ const runSequenceTailAsync = async (params: {
   settings: DispatchSettings;
   initialRemoteJid: string;
   initialLastResult: SendResult;
-  mirrorToChat: boolean;
-  mirrorPhone: string;
 }): Promise<void> => {
   let lastResult: SendResult = params.initialLastResult;
 
@@ -278,29 +276,27 @@ const runSequenceTailAsync = async (params: {
       return;
     }
 
-    if (params.mirrorToChat) {
-      const personalizedStep: SequenceStep = {
-        ...step,
-        content: replaceVariablesInContent(
-          step.content,
-          params.normalizedContact,
-          params.defaultName || 'Cliente'
-        ),
-      };
-      const { messageType, content, mediaUrl } = crmMirrorFieldsFromSequenceStep(personalizedStep);
-      await mirrorOutboundToCrmIfEnabled({
-        enabled: true,
-        userId: params.userId,
-        instanceId: params.instanceId,
-        phone: params.mirrorPhone,
-        remoteJid: lastResult.remoteJid,
-        messageId: lastResult.messageId,
-        messageType,
-        content,
-        mediaUrl,
-        timestamp: new Date(),
-      });
-    }
+    const seqPersonalized = replaceVariablesInContent(
+      step.content,
+      params.normalizedContact,
+      params.defaultName || 'Cliente'
+    ) as Record<string, unknown>;
+    const seqMirror = buildCrmMirrorFromSequenceStep(step, seqPersonalized);
+    void mirrorDispatchMessageToCrmIfEnabled({
+      showInChat: params.settings.showInChat === true,
+      userId: params.userId,
+      instanceId: params.instanceId,
+      remoteJid: lastResult.remoteJid,
+      messageId: lastResult.messageId,
+      messageType: seqMirror.messageType,
+      content: seqMirror.content,
+      mediaUrl: seqMirror.mediaUrl,
+      contactName:
+        params.normalizedContact.name ||
+        params.normalizedContact.formattedPhone ||
+        params.normalizedContact.phone,
+      contactPhone: params.normalizedContact.formattedPhone || params.normalizedContact.phone,
+    });
 
     if (params.settings.autoDelete && lastResult.messageId && params.settings.deleteDelay) {
       const unit = params.settings.deleteDelayUnit;
@@ -460,13 +456,10 @@ export const processContact = async (
         ? { integration, phone_number_id }
         : undefined;
 
-    const mirrorToChat = settings.showDispatchInChat === true;
-
     const du = settings.deleteDelayUnit;
     const dispatchSettings: DispatchSettings = {
-      speed: settings.speed as DispatchSettings['speed'],
-      autoDelete: settings.autoDelete,
-      deleteDelay: settings.deleteDelay,
+      ...settings,
+      speed: (settings.speed || 'normal') as DispatchSettings['speed'],
       deleteDelayUnit:
         du === 'seconds' || du === 'minutes' || du === 'hours' ? du : undefined,
     };
@@ -521,25 +514,25 @@ export const processContact = async (
 
       await DispatchService.updateStats(dispatchId, userId, { sent: 1 });
 
-      if (mirrorToChat) {
-        const personalizedSteps = personalizedContent.steps as SequenceStep[];
-        const firstResolved = personalizedSteps[0];
-        if (firstResolved) {
-          const { messageType, content, mediaUrl } = crmMirrorFieldsFromSequenceStep(firstResolved);
-          await mirrorOutboundToCrmIfEnabled({
-            enabled: true,
-            userId,
-            instanceId: dispatch.instanceId,
-            phone: normalizedPhone,
-            remoteJid: realRemoteJid,
-            messageId,
-            messageType,
-            content,
-            mediaUrl,
-            timestamp: new Date(),
-          });
-        }
-      }
+      const firstPersonalized = replaceVariablesInContent(
+        firstStep.content,
+        normalizedContact,
+        defaultName || 'Cliente'
+      ) as Record<string, unknown>;
+      const firstMirror = buildCrmMirrorFromSequenceStep(firstStep, firstPersonalized);
+      void mirrorDispatchMessageToCrmIfEnabled({
+        showInChat: settings.showInChat === true,
+        userId,
+        instanceId: dispatch.instanceId,
+        remoteJid: realRemoteJid,
+        messageId,
+        messageType: firstMirror.messageType,
+        content: firstMirror.content,
+        mediaUrl: firstMirror.mediaUrl,
+        contactName:
+          normalizedContact.name || normalizedContact.formattedPhone || normalizedPhone,
+        contactPhone: normalizedContact.formattedPhone || normalizedPhone,
+      });
 
       if (settings.autoDelete && messageId && settings.deleteDelay) {
         const deleteDelayMs = calculateDeleteDelay(settings.deleteDelay, settings.deleteDelayUnit);
@@ -567,8 +560,6 @@ export const processContact = async (
           settings: dispatchSettings,
           initialRemoteJid: remoteJid,
           initialLastResult: sendResult,
-          mirrorToChat,
-          mirrorPhone: normalizedPhone,
         })
           .catch((err) => console.error('❌ [sequence tail] não tratado:', err))
           .finally(async () => {
@@ -627,24 +618,23 @@ export const processContact = async (
 
     await DispatchService.updateStats(dispatchId, userId, { sent: 1 });
 
-    if (mirrorToChat && sendResult) {
-      const { messageType, content, mediaUrl } = crmMirrorFieldsFromTemplate(
-        template.type,
-        personalizedContent as Record<string, unknown>
-      );
-      await mirrorOutboundToCrmIfEnabled({
-        enabled: true,
-        userId,
-        instanceId: dispatch.instanceId,
-        phone: normalizedPhone,
-        remoteJid: realRemoteJid,
-        messageId: sendResult.messageId,
-        messageType,
-        content,
-        mediaUrl,
-        timestamp: new Date(),
-      });
-    }
+    const tplMirror = buildCrmMirrorFromTemplateType(
+      template.type as TemplateType,
+      personalizedContent as Record<string, unknown>
+    );
+    void mirrorDispatchMessageToCrmIfEnabled({
+      showInChat: settings.showInChat === true,
+      userId,
+      instanceId: dispatch.instanceId,
+      remoteJid: realRemoteJid,
+      messageId: messageId!,
+      messageType: tplMirror.messageType,
+      content: tplMirror.content,
+      mediaUrl: tplMirror.mediaUrl,
+      contactName:
+        normalizedContact.name || normalizedContact.formattedPhone || normalizedPhone,
+      contactPhone: normalizedContact.formattedPhone || normalizedPhone,
+    });
 
     // AutoDelete: usar realRemoteJid (retornado pela Evolution API)
     if (settings.autoDelete && messageId && settings.deleteDelay) {

@@ -302,6 +302,7 @@ export class DispatchService {
     const settings = parseJsonbField<DispatchSettings>(row.settings, {
       speed: 'normal',
       autoDelete: false,
+      showInChat: false,
     });
     const scheduleRaw = parseJsonbField<DispatchSchedule | null>(row.schedule, null);
     const schedule =
