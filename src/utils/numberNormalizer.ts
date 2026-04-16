@@ -155,3 +155,88 @@ export const ensureNormalizedPhoneList = (
     .filter((phone): phone is string => phone !== null);
 };
 
+const WHATSAPP_NET_SUFFIX = '@s.whatsapp.net';
+
+/**
+ * Celular BR com DDI 55: após o DDD, insere o 9 quando há só 8 dígitos (alinhado ao Backend).
+ */
+export function canonicalizeBrazilWhatsappDigits(digits: string): string {
+  const only = digits.replace(/\D/g, '');
+  if (!only.startsWith('55')) {
+    return only;
+  }
+  if (only.length === 12) {
+    const ddd = only.slice(2, 4);
+    const subscriber = only.slice(4);
+    if (subscriber.length === 8 && /^[6-9]\d{7}$/.test(subscriber)) {
+      return `55${ddd}9${subscriber}`;
+    }
+  }
+  return only;
+}
+
+/**
+ * 55 + DDD + 9 + 8 dígitos → 55 + DDD + 8 dígitos (forma antiga), para casar busca com JIDs variados.
+ */
+export function stripBrazilMobileLeadingNine(digits: string): string | null {
+  const only = digits.replace(/\D/g, '');
+  if (!only.startsWith('55') || only.length !== 13) {
+    return null;
+  }
+  const ddd = only.slice(2, 4);
+  const rest = only.slice(4);
+  if (rest.length === 9 && rest[0] === '9') {
+    return `55${ddd}${rest.slice(1)}`;
+  }
+  return null;
+}
+
+/**
+ * JID estável para gravar no CRM (somente @s.whatsapp.net): forma canônica BR quando aplicável.
+ */
+export function toStorageWhatsappRemoteJid(remoteJid: string): string {
+  if (!remoteJid || typeof remoteJid !== 'string') {
+    return remoteJid;
+  }
+  const lower = remoteJid.toLowerCase();
+  if (!lower.endsWith(WHATSAPP_NET_SUFFIX)) {
+    return remoteJid;
+  }
+  const localPart = remoteJid.split('@')[0];
+  const digits = localPart.replace(/\D/g, '');
+  if (!digits) {
+    return remoteJid;
+  }
+  const canon = canonicalizeBrazilWhatsappDigits(digits);
+  return `${canon}${WHATSAPP_NET_SUFFIX}`;
+}
+
+/**
+ * Possíveis remote_jid equivalentes para SELECT (mesmo contato, formatos 12/13 dígitos BR).
+ */
+export function whatsappRemoteJidLookupVariants(remoteJid: string): string[] {
+  if (!remoteJid || typeof remoteJid !== 'string') {
+    return [];
+  }
+  const lower = remoteJid.toLowerCase();
+  if (!lower.endsWith(WHATSAPP_NET_SUFFIX)) {
+    return [remoteJid];
+  }
+  const localPart = remoteJid.split('@')[0];
+  const digits = localPart.replace(/\D/g, '');
+  if (!digits) {
+    return [remoteJid];
+  }
+
+  const canonical = canonicalizeBrazilWhatsappDigits(digits);
+  const stripped = stripBrazilMobileLeadingNine(canonical);
+
+  const set = new Set<string>();
+  set.add(`${digits}${WHATSAPP_NET_SUFFIX}`);
+  set.add(`${canonical}${WHATSAPP_NET_SUFFIX}`);
+  if (stripped && stripped !== canonical) {
+    set.add(`${stripped}${WHATSAPP_NET_SUFFIX}`);
+  }
+  return Array.from(set);
+}
+

@@ -4,22 +4,44 @@
  */
 
 import { pgQuery } from '../config/databases';
-import { extractPhoneFromJid, normalizePhone } from '../utils/numberNormalizer';
+import {
+  extractPhoneFromJid,
+  normalizePhone,
+  toStorageWhatsappRemoteJid,
+  whatsappRemoteJidLookupVariants,
+} from '../utils/numberNormalizer';
 import { emitDispatchCrmOutboundMirrored } from '../socket/socketClient';
 import { registerDispatchCrmOutboundSuppress } from './dispatchCrmSuppressRegistration';
 import type { DispatchSettings } from '../types/dispatch';
 
+const WHATSAPP_NET_SUFFIX = '@s.whatsapp.net';
+
+/**
+ * Mesmas variantes que o Backend (ContactService) + JID nacional sem DDI 55
+ * (ex.: 6293557070@s.whatsapp.net vs 556293557070@s.whatsapp.net da Evolution).
+ */
 function remoteJidLookupList(remoteJid: string): string[] {
   const s = remoteJid?.trim();
   if (!s) return [];
-  const uniq = new Set<string>([s]);
-  const digits = extractPhoneFromJid(s);
-  const n = normalizePhone(digits, '55');
-  if (n) {
-    const alt = `${n}@s.whatsapp.net`;
-    if (alt !== s) uniq.add(alt);
+  const set = new Set<string>();
+  for (const v of whatsappRemoteJidLookupVariants(s)) {
+    set.add(v);
   }
-  return [...uniq];
+  const lower = s.toLowerCase();
+  if (lower.endsWith(WHATSAPP_NET_SUFFIX)) {
+    const local = s.split('@')[0]?.replace(/\D/g, '') ?? '';
+    if (local.startsWith('55') && local.length >= 12) {
+      set.add(`${local.slice(2)}${WHATSAPP_NET_SUFFIX}`);
+    }
+    if (!local.startsWith('55') && (local.length === 10 || local.length === 11)) {
+      const with55 = `55${local}`;
+      set.add(`${with55}${WHATSAPP_NET_SUFFIX}`);
+      for (const v of whatsappRemoteJidLookupVariants(`${with55}${WHATSAPP_NET_SUFFIX}`)) {
+        set.add(v);
+      }
+    }
+  }
+  return [...set];
 }
 
 async function findContactRow(
@@ -128,10 +150,11 @@ export async function mirrorDispatchOutboundToCrm(params: {
         console.warn('[dispatch CRM mirror] Sem coluna CRM para criar contato; ignorando espelho.');
         return;
       }
-      const digits = extractPhoneFromJid(rjid);
+      const storageJid = toStorageWhatsappRemoteJid(rjid);
+      const digits = extractPhoneFromJid(storageJid);
       const phone = normalizePhone(digits, '55') || digits;
       try {
-        contact = await insertContact(params.userId, params.instanceId, rjid, phone, columnId);
+        contact = await insertContact(params.userId, params.instanceId, storageJid, phone, columnId);
       } catch (e: unknown) {
         const code = e && typeof e === 'object' && 'code' in e ? (e as { code: string }).code : '';
         if (code === '23505') {
