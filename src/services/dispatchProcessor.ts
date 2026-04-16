@@ -9,6 +9,11 @@ import { ensureNormalizedPhone } from '../utils/numberNormalizer';
 import { TemplateService } from './templateService';
 import { DispatchService } from './dispatchService';
 import { ContactData, SequenceStep, DispatchSettings } from '../types/dispatch';
+import {
+  mirrorOutboundToCrmIfEnabled,
+  crmMirrorFieldsFromTemplate,
+  crmMirrorFieldsFromSequenceStep,
+} from './dispatchCrmMirror';
 
 type OfficialContext = { integration: string; phone_number_id: string } | undefined;
 
@@ -224,6 +229,7 @@ const stepDelayBeforeSendMs = (step: SequenceStep): number => {
 const runSequenceTailAsync = async (params: {
   dispatchId: string;
   userId: string;
+  instanceId: string;
   instanceName: string;
   steps: SequenceStep[];
   startIndex: number;
@@ -233,6 +239,8 @@ const runSequenceTailAsync = async (params: {
   settings: DispatchSettings;
   initialRemoteJid: string;
   initialLastResult: SendResult;
+  mirrorToChat: boolean;
+  mirrorPhone: string;
 }): Promise<void> => {
   let lastResult: SendResult = params.initialLastResult;
 
@@ -268,6 +276,30 @@ const runSequenceTailAsync = async (params: {
       const msg = error instanceof Error ? error.message : String(error);
       console.error(`❌ [sequence tail] etapa ${i + 1} falhou (dispatch ${params.dispatchId}):`, msg);
       return;
+    }
+
+    if (params.mirrorToChat) {
+      const personalizedStep: SequenceStep = {
+        ...step,
+        content: replaceVariablesInContent(
+          step.content,
+          params.normalizedContact,
+          params.defaultName || 'Cliente'
+        ),
+      };
+      const { messageType, content, mediaUrl } = crmMirrorFieldsFromSequenceStep(personalizedStep);
+      await mirrorOutboundToCrmIfEnabled({
+        enabled: true,
+        userId: params.userId,
+        instanceId: params.instanceId,
+        phone: params.mirrorPhone,
+        remoteJid: lastResult.remoteJid,
+        messageId: lastResult.messageId,
+        messageType,
+        content,
+        mediaUrl,
+        timestamp: new Date(),
+      });
     }
 
     if (params.settings.autoDelete && lastResult.messageId && params.settings.deleteDelay) {
@@ -378,7 +410,7 @@ export const processContact = async (
   templateId: string,
   contact: ContactData,
   defaultName: string | null,
-  settings: { speed: string; autoDelete?: boolean; deleteDelay?: number; deleteDelayUnit?: string },
+  settings: DispatchSettings,
   integration?: string | null,
   phone_number_id?: string | null
 ): Promise<{ success: boolean; error?: string; messageId?: string }> => {
@@ -427,6 +459,8 @@ export const processContact = async (
       integration === 'WHATSAPP-CLOUD' && phone_number_id
         ? { integration, phone_number_id }
         : undefined;
+
+    const mirrorToChat = settings.showDispatchInChat === true;
 
     const du = settings.deleteDelayUnit;
     const dispatchSettings: DispatchSettings = {
@@ -487,6 +521,26 @@ export const processContact = async (
 
       await DispatchService.updateStats(dispatchId, userId, { sent: 1 });
 
+      if (mirrorToChat) {
+        const personalizedSteps = personalizedContent.steps as SequenceStep[];
+        const firstResolved = personalizedSteps[0];
+        if (firstResolved) {
+          const { messageType, content, mediaUrl } = crmMirrorFieldsFromSequenceStep(firstResolved);
+          await mirrorOutboundToCrmIfEnabled({
+            enabled: true,
+            userId,
+            instanceId: dispatch.instanceId,
+            phone: normalizedPhone,
+            remoteJid: realRemoteJid,
+            messageId,
+            messageType,
+            content,
+            mediaUrl,
+            timestamp: new Date(),
+          });
+        }
+      }
+
       if (settings.autoDelete && messageId && settings.deleteDelay) {
         const deleteDelayMs = calculateDeleteDelay(settings.deleteDelay, settings.deleteDelayUnit);
         setTimeout(async () => {
@@ -503,6 +557,7 @@ export const processContact = async (
         void runSequenceTailAsync({
           dispatchId,
           userId,
+          instanceId: dispatch.instanceId,
           instanceName,
           steps,
           startIndex: 1,
@@ -512,6 +567,8 @@ export const processContact = async (
           settings: dispatchSettings,
           initialRemoteJid: remoteJid,
           initialLastResult: sendResult,
+          mirrorToChat,
+          mirrorPhone: normalizedPhone,
         })
           .catch((err) => console.error('❌ [sequence tail] não tratado:', err))
           .finally(async () => {
@@ -569,6 +626,25 @@ export const processContact = async (
     const realRemoteJid = sendResult?.remoteJid || remoteJid;
 
     await DispatchService.updateStats(dispatchId, userId, { sent: 1 });
+
+    if (mirrorToChat && sendResult) {
+      const { messageType, content, mediaUrl } = crmMirrorFieldsFromTemplate(
+        template.type,
+        personalizedContent as Record<string, unknown>
+      );
+      await mirrorOutboundToCrmIfEnabled({
+        enabled: true,
+        userId,
+        instanceId: dispatch.instanceId,
+        phone: normalizedPhone,
+        remoteJid: realRemoteJid,
+        messageId: sendResult.messageId,
+        messageType,
+        content,
+        mediaUrl,
+        timestamp: new Date(),
+      });
+    }
 
     // AutoDelete: usar realRemoteJid (retornado pela Evolution API)
     if (settings.autoDelete && messageId && settings.deleteDelay) {

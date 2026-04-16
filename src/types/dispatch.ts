@@ -116,6 +116,8 @@ export interface DispatchSettings {
   autoDelete?: boolean;
   deleteDelay?: number;
   deleteDelayUnit?: 'seconds' | 'minutes' | 'hours';
+  /** Se true, cada envio é gravado em contacts/messages (CRM) para aparecer no chat. */
+  showDispatchInChat?: boolean;
 }
 
 export interface DispatchSchedule {
