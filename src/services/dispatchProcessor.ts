@@ -9,17 +9,8 @@ import { ensureNormalizedPhone } from '../utils/numberNormalizer';
 import { TemplateService } from './templateService';
 import { DispatchService } from './dispatchService';
 import { ContactData, SequenceStep, DispatchSettings } from '../types/dispatch';
-import { registerDispatchCrmOutboundSuppress } from './dispatchCrmSuppressRegistration';
-
-async function maybeRegisterOutboundCrmSuppress(
-  instanceId: string | undefined,
-  messageId: string | undefined,
-  settings: DispatchSettings
-): Promise<void> {
-  if (!instanceId?.trim() || !messageId?.trim()) return;
-  if (settings.showMessagesInCrmChat !== false) return;
-  await registerDispatchCrmOutboundSuppress(instanceId.trim(), messageId.trim());
-}
+import { applyDispatchOutboundCrmVisibility } from './dispatchCrmOutboundMirror';
+import { crmMirrorPayloadFromDispatchTemplate, crmMirrorPayloadFromSequenceStep } from '../utils/crmMirrorPayload';
 
 type OfficialContext = { integration: string; phone_number_id: string } | undefined;
 
@@ -282,11 +273,20 @@ const runSequenceTailAsync = async (params: {
       return;
     }
 
-    await maybeRegisterOutboundCrmSuppress(
-      params.instanceId,
-      lastResult.messageId,
-      params.settings
+    const tailMirror = crmMirrorPayloadFromSequenceStep(
+      step,
+      params.normalizedContact,
+      params.defaultName
     );
+    await applyDispatchOutboundCrmVisibility(params.settings, {
+      userId: params.userId,
+      instanceId: params.instanceId,
+      remoteJid: lastResult.remoteJid || params.initialRemoteJid,
+      messageId: lastResult.messageId,
+      messageType: tailMirror.messageType,
+      content: tailMirror.content,
+      mediaUrl: tailMirror.mediaUrl,
+    });
 
     if (params.settings.autoDelete && lastResult.messageId && params.settings.deleteDelay) {
       const unit = params.settings.deleteDelayUnit;
@@ -504,7 +504,20 @@ export const processContact = async (
       const messageId = sendResult.messageId;
       const realRemoteJid = sendResult.remoteJid || remoteJid;
 
-      await maybeRegisterOutboundCrmSuppress(dispatch.instanceId, messageId, dispatchSettings);
+      const seqMirror = crmMirrorPayloadFromSequenceStep(
+        firstStep,
+        normalizedContact,
+        defaultName || undefined
+      );
+      await applyDispatchOutboundCrmVisibility(dispatchSettings, {
+        userId: dispatch.userId,
+        instanceId: dispatch.instanceId,
+        remoteJid: realRemoteJid,
+        messageId,
+        messageType: seqMirror.messageType,
+        content: seqMirror.content,
+        mediaUrl: seqMirror.mediaUrl,
+      });
       await DispatchService.updateStats(dispatchId, userId, { sent: 1 });
 
       if (settings.autoDelete && messageId && settings.deleteDelay) {
@@ -589,7 +602,19 @@ export const processContact = async (
     const messageId = sendResult?.messageId;
     const realRemoteJid = sendResult?.remoteJid || remoteJid;
 
-    await maybeRegisterOutboundCrmSuppress(dispatch.instanceId, messageId, settings);
+    const tplMirror = crmMirrorPayloadFromDispatchTemplate(
+      template.type,
+      personalizedContent as Record<string, unknown>
+    );
+    await applyDispatchOutboundCrmVisibility(settings, {
+      userId: dispatch.userId,
+      instanceId: dispatch.instanceId,
+      remoteJid: realRemoteJid,
+      messageId,
+      messageType: tplMirror.messageType,
+      content: tplMirror.content,
+      mediaUrl: tplMirror.mediaUrl,
+    });
     await DispatchService.updateStats(dispatchId, userId, { sent: 1 });
 
     // AutoDelete: usar realRemoteJid (retornado pela Evolution API)

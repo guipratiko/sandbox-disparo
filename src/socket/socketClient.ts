@@ -102,6 +102,43 @@ export const connectSocket = (): void => {
  * Emitir evento de atualização de disparo
  * O backend principal irá re-emitir para o frontend
  */
+export type DispatchCrmOutboundMirroredPayload = {
+  instanceId: string;
+  contactId: string;
+  crmMessageUuid: string;
+};
+
+/**
+ * Notificar o backend para reemitir `new-message` ao CRM (espelho do disparo).
+ */
+export const emitDispatchCrmOutboundMirrored = (
+  userId: string,
+  data: DispatchCrmOutboundMirroredPayload
+): void => {
+  const eventData = {
+    userId,
+    data: {
+      type: 'message' as const,
+      instanceId: data.instanceId,
+      contactId: data.contactId,
+      crmMessageUuid: data.crmMessageUuid,
+    },
+  };
+
+  if (!socket) {
+    connectSocket();
+  }
+
+  if (socket && isConnected) {
+    socket.emit('dispatch-crm-outbound-mirrored', eventData);
+  } else {
+    pendingEvents.push({
+      event: 'dispatch-crm-outbound-mirrored',
+      data: eventData,
+    });
+  }
+};
+
 export const emitDispatchUpdate = (userId: string, dispatch: Dispatch): void => {
   const eventData = {
     userId,
