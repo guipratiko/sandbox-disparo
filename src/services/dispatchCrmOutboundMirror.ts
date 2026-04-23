@@ -47,13 +47,13 @@ async function findContactRow(
 ): Promise<{ id: string; remote_jid: string } | null> {
   const jids = remoteJidLookupList(remoteJid);
   if (jids.length === 0) return null;
-  /** Vários cards (Enterprise por departamento): preferir o mais “ativo” e cartões com departamento. */
+  /** Vários cards (Enterprise por departamento): preferir cartão com departamento, depois o mais ativo. */
   const r = await pgQuery(
     `SELECT id, remote_jid FROM contacts
      WHERE user_id = $1 AND instance_id = $2 AND remote_jid = ANY($3::text[])
      ORDER BY
-       last_message_at DESC NULLS LAST,
        (department_id IS NULL) ASC,
+       last_message_at DESC NULLS LAST,
        updated_at DESC
      LIMIT 1`,
     [userId, instanceId, jids]
