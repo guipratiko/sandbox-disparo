@@ -47,11 +47,9 @@ async function findContactRow(
 ): Promise<{ id: string; remote_jid: string } | null> {
   const jids = remoteJidLookupList(remoteJid);
   if (jids.length === 0) return null;
-  /** Prefere card com departamento (Enterprise) ao legado `NULL` quando há vários JIDs iguais. */
   const r = await pgQuery(
     `SELECT id, remote_jid FROM contacts
      WHERE user_id = $1 AND instance_id = $2 AND remote_jid = ANY($3::text[])
-     ORDER BY (department_id IS NULL) ASC, updated_at DESC NULLS LAST
      LIMIT 1`,
     [userId, instanceId, jids]
   );
@@ -60,32 +58,13 @@ async function findContactRow(
   return { id: row.id, remote_jid: row.remote_jid };
 }
 
-/** Primeira coluna para novo card: Kanban legado (sem departamento), senão qualquer coluna do utilizador. */
-async function getFirstColumnForMirror(
-  userId: string
-): Promise<{ columnId: string; departmentId: string | null } | null> {
-  let r = await pgQuery(
-    `SELECT id, department_id FROM crm_columns
-     WHERE user_id = $1 AND department_id IS NULL
-     ORDER BY order_index ASC
-     LIMIT 1`,
+async function getFirstColumnId(userId: string): Promise<string | null> {
+  const r = await pgQuery(
+    `SELECT id FROM crm_columns WHERE user_id = $1 ORDER BY order_index ASC LIMIT 1`,
     [userId]
   );
-  if (r.rows.length === 0) {
-    r = await pgQuery(
-      `SELECT id, department_id FROM crm_columns
-       WHERE user_id = $1
-       ORDER BY order_index ASC
-       LIMIT 1`,
-      [userId]
-    );
-  }
   if (r.rows.length === 0) return null;
-  const row = r.rows[0] as { id: string; department_id: string | null };
-  return {
-    columnId: String(row.id),
-    departmentId: row.department_id != null ? String(row.department_id) : null,
-  };
+  return String((r.rows[0] as { id: string }).id);
 }
 
 async function insertContact(
@@ -93,17 +72,16 @@ async function insertContact(
   instanceId: string,
   storageRemoteJid: string,
   phone: string,
-  columnId: string,
-  departmentId: string | null
+  columnId: string
 ): Promise<{ id: string; remote_jid: string }> {
   const ins = await pgQuery(
     `INSERT INTO contacts (
       user_id, instance_id, remote_jid, phone, name,
-      profile_picture, column_id, department_id, unread_count
+      profile_picture, column_id, unread_count
     )
-    VALUES ($1, $2, $3, $4, $5, NULL, $6, $7, 0)
+    VALUES ($1, $2, $3, $4, $5, NULL, $6, 0)
     RETURNING id, remote_jid`,
-    [userId, instanceId, storageRemoteJid, phone, phone, columnId, departmentId]
+    [userId, instanceId, storageRemoteJid, phone, phone, columnId]
   );
   const row = ins.rows[0] as { id: string; remote_jid: string };
   return { id: row.id, remote_jid: row.remote_jid };
@@ -167,22 +145,15 @@ export async function mirrorDispatchOutboundToCrm(params: {
   try {
     let contact = await findContactRow(params.userId, params.instanceId, rjid);
     if (!contact) {
-      const col = await getFirstColumnForMirror(params.userId);
-      if (!col) {
+      const columnId = await getFirstColumnId(params.userId);
+      if (!columnId) {
         console.warn('[dispatch CRM mirror] Sem coluna CRM para criar contato; ignorando espelho.');
         return;
       }
       const storageJid = toStorageWhatsappRemoteJid(rjid);
       const phone = formatWhatsAppPhone(storageJid);
       try {
-        contact = await insertContact(
-          params.userId,
-          params.instanceId,
-          storageJid,
-          phone,
-          col.columnId,
-          col.departmentId
-        );
+        contact = await insertContact(params.userId, params.instanceId, storageJid, phone, columnId);
       } catch (e: unknown) {
         const code = e && typeof e === 'object' && 'code' in e ? (e as { code: string }).code : '';
         if (code === '23505') {
