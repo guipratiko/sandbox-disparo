@@ -4,9 +4,11 @@
  */
 
 import axios from 'axios';
-import { SERVER_CONFIG } from '../config/constants';
-
-const BACKEND_URL = process.env.BACKEND_URL || 'http://localhost:4331';
+import {
+  getOnlyflowBackendBaseUrl,
+  ONLYFLOW_BACKEND_HTTP_TIMEOUT_MS,
+  onlyflowBackendAuthHeaders,
+} from './onlyflowBackendUrl';
 
 export interface InstanceInfo {
   _id: string;
@@ -29,9 +31,9 @@ export const getInstanceInfo = async (
   try {
     // Tentar buscar do backend principal via HTTP
     // Se não funcionar, retornar estrutura básica
-    const response = await axios.get(`${BACKEND_URL}/api/instances/${instanceId}`, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-      timeout: 5000,
+    const response = await axios.get(`${getOnlyflowBackendBaseUrl()}/api/instances/${instanceId}`, {
+      headers: onlyflowBackendAuthHeaders(token),
+      timeout: ONLYFLOW_BACKEND_HTTP_TIMEOUT_MS,
     });
 
     if (response.data && response.data.instance) {
